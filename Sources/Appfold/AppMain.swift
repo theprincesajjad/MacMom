@@ -1,6 +1,7 @@
 import AppKit
 import AppfoldCore
 import Darwin
+import UniformTypeIdentifiers
 
 private final class AppBox {
     static var delegate: AppDelegate?
@@ -34,6 +35,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
+    private lazy var glanceController: GlanceController = {
+        let controller = GlanceController()
+        controller.onOpen = { [weak self] in
+            self?.openMainWindow(nil)
+        }
+        controller.onSettings = { [weak self] in
+            self?.showGlanceExportMenu()
+        }
+        controller.onQuit = {
+            NSApp.terminate(nil)
+        }
+        return controller
+    }()
+    private var sessionDownAccum: UInt64 = 0
+    private var sessionUpAccum: UInt64 = 0
     private var menuPanel: PanelUI?
     private var windowPanel: PanelUI?
     private var mainWindow: NSWindow?
@@ -57,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastProjectScan: Date?
     private var projectBusy: [String: Date] = [:]
     private var cachedBattery = BatteryStatus(hasBattery: false, onACPower: true, percent: nil, minutesRemaining: nil, cycleCount: nil, healthPercent: nil, watts: nil, temperatureC: nil)
-    private var cachedMemory = MemoryBreakdown(wiredBytes: 0, compressedBytes: 0, cachedBytes: 0, freeBytes: 0, swapBytes: 0, totalBytes: 0)
+    private var cachedMemory = MemoryBreakdown(appBytes: 0, wiredBytes: 0, compressedBytes: 0, cachedBytes: 0, freeBytes: 0, swapBytes: 0, totalBytes: 0)
     private var cachedVolumes: [VolumeInfo] = []
     private var cachedInterface = InterfaceInfo(bsdName: "", kind: "", bytesIn: 0, bytesOut: 0)
     private var cachedGPU = GPUStatus(name: "", utilizationPercent: nil, memoryBytes: nil)
@@ -102,8 +118,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window == mainWindow else { return }
-        schedule.windowVisible = false
-        scheduleNext()
+        if !glanceController.isVisible {
+            schedule.windowVisible = false
+            scheduleNext()
+        }
         NSApp.setActivationPolicy(.accessory)
     }
 
@@ -118,8 +136,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         historyWriter.write(snapshot: snapshot, store: historyStore)
         recordSeries(snapshot, now: now)
         updateStatusItem()
-        if mainWindow?.isVisible == true {
+        let windowOpen = mainWindow?.isVisible == true
+        let glanceOpen = glanceController.isVisible
+        if windowOpen || glanceOpen {
+            ensureHost(now: now)
+            if let snapshot = self.snapshot {
+                ensureProjects(now: now, snapshot: snapshot)
+            }
+        }
+        if windowOpen {
             renderDashboard(now: now)
+        }
+        if glanceOpen, let snapshot = self.snapshot {
+            noteProjectBusy(now: now)
+            glanceController.render(makeDashState(snapshot, now: now))
         }
         if popover?.isShown == true {
             renderLists()
@@ -179,9 +209,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            if let image = NSImage(systemSymbolName: "cpu", accessibilityDescription: "Appfold") {
+            if let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Appfold") {
                 image.isTemplate = true
-                image.size = NSSize(width: 16, height: 16)
+                image.size = NSSize(width: 16, height: 14)
                 button.image = image
             }
             button.imagePosition = .imageLeading
@@ -189,6 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.toolTip = "Appfold"
             button.target = self
             button.action = #selector(togglePopover(_:))
+            button.sendAction(on: [.leftMouseUp])
         }
         statusItem = item
     }
@@ -203,7 +234,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func togglePopover(_ sender: Any?) {
-        openMainWindow(sender)
+        glanceController.toggle(from: statusItem?.button)
+        if glanceController.isVisible {
+            schedule.windowVisible = true
+            refreshNow()
+        } else if mainWindow?.isVisible != true {
+            schedule.windowVisible = false
+            scheduleNext()
+        }
+    }
+
+    @objc private func showGlanceExportMenu() {
+        let menu = NSMenu()
+        let copy = NSMenuItem(title: "Copy Share Card", action: #selector(copyShareCard(_:)), keyEquivalent: "")
+        copy.target = self
+        menu.addItem(copy)
+        let save = NSMenuItem(title: "Save Share Card…", action: #selector(saveShareCard(_:)), keyEquivalent: "")
+        save.target = self
+        menu.addItem(save)
+        if let event = NSApp.currentEvent {
+            NSMenu.popUpContextMenu(menu, with: event, for: glanceController.glance)
+        } else {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        }
+    }
+
+    @objc private func copyShareCard(_ sender: Any?) {
+        guard let state = currentDashState() else {
+            NSSound.beep()
+            return
+        }
+        GlanceExport.copyToPasteboard(GlanceExport.shareCard(state: state))
+    }
+
+    @objc private func saveShareCard(_ sender: Any?) {
+        guard let state = currentDashState() else {
+            NSSound.beep()
+            return
+        }
+        let image = GlanceExport.shareCard(state: state)
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = "Appfold.png"
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let url = panel.url, let data = GlanceExport.pngData(image) else { return }
+            try? data.write(to: url)
+        }
+    }
+
+    private func currentDashState() -> DashState? {
+        guard let snapshot else { return nil }
+        let now = Date()
+        ensureHost(now: now)
+        ensureProjects(now: now, snapshot: snapshot)
+        return makeDashState(snapshot, now: now)
     }
 
     @objc private func openMainWindow(_ sender: Any?) {
@@ -222,6 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.activate(ignoringOtherApps: true)
         }
         mainWindow?.makeKeyAndOrderFront(nil)
+        glanceController.close()
         if let snapshot {
             renderDashboard(now: Date(), snapshot: snapshot)
         }
@@ -410,8 +496,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func makeWindow() -> NSWindow {
         let root = DashboardRoot()
-        root.onSelectTab = { [weak self] _ in
-            guard let self, let snapshot = self.snapshot else { return }
+        root.onSelectTab = { [weak self] tab in
+            guard tab == .projects, let self, let snapshot = self.snapshot else { return }
             self.renderDashboard(now: Date(), snapshot: snapshot)
         }
         root.onSelectApp = { [weak self] id in
@@ -432,8 +518,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         root.onStopProjects = { [weak self] pids in self?.stopProjects(pids) }
         dashboard = root
+        let minWidth = PillBar.minimumWindowWidth()
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 800),
+            contentRect: NSRect(x: 0, y: 0, width: minWidth, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -447,7 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = root
-        window.minSize = NSSize(width: 1020, height: 680)
+        window.minSize = NSSize(width: minWidth, height: 680)
         window.center()
         return window
     }
@@ -465,40 +552,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func renderDashboard(now: Date, snapshot explicit: SystemSnapshot? = nil) {
         guard let snapshot = explicit ?? self.snapshot, let dashboard else { return }
-        if hostReadAt == nil || now.timeIntervalSince(hostReadAt!) > 2 {
-            let previousIn = lastBytesIn
-            let previousOut = lastBytesOut
-            let previousAt = hostReadAt
-            cachedBattery = HostExtras.battery()
-            cachedMemory = HostExtras.memory()
-            cachedVolumes = HostExtras.volumes()
-            cachedInterface = HostExtras.primaryInterface()
-            cachedGPU = HostExtras.gpu()
-            if let previousAt, let previousIn, let previousOut, cachedInterface.bytesIn >= previousIn, cachedInterface.bytesOut >= previousOut {
-                let elapsed = now.timeIntervalSince(previousAt)
-                if elapsed > 0 {
-                    downloadPerSecond = Double(cachedInterface.bytesIn - previousIn) / elapsed
-                    uploadPerSecond = Double(cachedInterface.bytesOut - previousOut) / elapsed
-                }
+        ensureHost(now: now)
+        ensureProjects(now: now, snapshot: snapshot)
+        noteProjectBusy(now: now)
+        dashboard.render(makeDashState(snapshot, now: now))
+    }
+
+    /// Battery, memory breakdown, disk, network, and GPU. Shared by the dashboard
+    /// and the menu-bar glance. The dashboard views do not change.
+    private func ensureHost(now: Date) {
+        if hostReadAt != nil, now.timeIntervalSince(hostReadAt!) <= 2 { return }
+        let previousIn = lastBytesIn
+        let previousOut = lastBytesOut
+        let previousAt = hostReadAt
+        cachedBattery = HostExtras.battery()
+        cachedMemory = HostExtras.memory()
+        cachedVolumes = HostExtras.volumes()
+        cachedInterface = HostExtras.primaryInterface()
+        cachedGPU = HostExtras.gpu()
+        if let previousAt, let previousIn, let previousOut, cachedInterface.bytesIn >= previousIn, cachedInterface.bytesOut >= previousOut {
+            let elapsed = now.timeIntervalSince(previousAt)
+            if elapsed > 0 {
+                downloadPerSecond = Double(cachedInterface.bytesIn - previousIn) / elapsed
+                uploadPerSecond = Double(cachedInterface.bytesOut - previousOut) / elapsed
             }
-            lastBytesIn = cachedInterface.bytesIn
-            lastBytesOut = cachedInterface.bytesOut
-            hostReadAt = now
-        }
-        if dashboard.selectedTab == .projects, lastProjectScan == nil || now.timeIntervalSince(lastProjectScan!) > 15 {
-            let rows = snapshot.apps.flatMap { app in
-                app.members.map { member in
-                    (pid: member.pid, name: member.name, memoryBytes: member.memoryBytes, cpuPercent: member.cpuPercent, startedAt: nil as Date?)
-                }
+            if elapsed > 0, elapsed < 30 {
+                sessionDownAccum += cachedInterface.bytesIn - previousIn
+                sessionUpAccum += cachedInterface.bytesOut - previousOut
             }
-            liveProjects = DevProjects.scan(processes: rows)
-            projectsScanned = true
-            lastProjectScan = now
         }
+        lastBytesIn = cachedInterface.bytesIn
+        lastBytesOut = cachedInterface.bytesOut
+        hostReadAt = now
+    }
+
+    private func ensureProjects(now: Date, snapshot: SystemSnapshot) {
+        let windowWants = mainWindow?.isVisible == true && dashboard?.selectedTab == .projects
+        let glanceWants = glanceController.isVisible && glanceController.selectedTab == .projects
+        guard windowWants || glanceWants else { return }
+        if lastProjectScan != nil, now.timeIntervalSince(lastProjectScan!) <= 15 { return }
+        let rows = snapshot.apps.flatMap { app in
+            app.members.map { member in
+                (pid: member.pid, name: member.name, memoryBytes: member.memoryBytes, cpuPercent: member.cpuPercent, startedAt: member.startedAt)
+            }
+        }
+        liveProjects = DevProjects.scan(processes: rows)
+        projectsScanned = true
+        lastProjectScan = now
+    }
+
+    private func noteProjectBusy(now: Date) {
         for project in liveProjects where project.cpuPercent >= 2 {
             projectBusy[project.directory] = now
         }
-        dashboard.render(makeDashState(snapshot, now: now))
     }
 
     private func recordSeries(_ snapshot: SystemSnapshot, now: Date) {
@@ -528,12 +634,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func padded(_ series: [Double]) -> [Double] {
-        guard series.count < 24 else { return series }
-        guard let fill = series.last else { return [] }
-        return Array(repeating: fill, count: 24 - series.count) + series
-    }
-
     private func append(_ value: Double, to series: inout [Double]) {
         series.append(value)
         if series.count > 48 {
@@ -553,17 +653,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.performanceCores = sysctlInt("hw.perflevel0.physicalcpu")
         state.efficiencyCores = sysctlInt("hw.perflevel1.physicalcpu")
         if state.performanceCores == 0 { state.performanceCores = state.cpuCores }
-        state.cpuSeries = padded(cpuSeries)
+        state.cpuSeries = SeriesWindow.window(cpuSeries)
 
-        state.memoryUsed = snapshot.systemMemoryUsedBytes
-        state.memoryTotal = snapshot.systemMemoryTotalBytes
-        state.memoryApp = snapshot.apps.reduce(0) { $0 + $1.memoryBytes }
-        state.memoryWired = cachedMemory.wiredBytes
-        state.memoryCompressed = cachedMemory.compressedBytes
-        state.memoryCached = cachedMemory.cachedBytes
-        state.memoryFree = cachedMemory.freeBytes
-        state.memorySwap = cachedMemory.swapBytes
-        state.memorySeries = padded(memorySeries)
+        let footprint = snapshot.apps.reduce(UInt64(0)) { $0 + $1.memoryBytes }
+        let parts = HostMemory.breakdown(
+            internalBytes: cachedMemory.appBytes,
+            wiredBytes: cachedMemory.wiredBytes,
+            compressedBytes: cachedMemory.compressedBytes,
+            externalBytes: cachedMemory.cachedBytes,
+            freeBytes: cachedMemory.freeBytes,
+            swapBytes: cachedMemory.swapBytes,
+            totalBytes: cachedMemory.totalBytes > 0 ? cachedMemory.totalBytes : snapshot.systemMemoryTotalBytes,
+            processFootprintSum: footprint
+        )
+        state.memoryUsed = parts.inUseBytes
+        state.memoryTotal = parts.totalBytes > 0 ? parts.totalBytes : snapshot.systemMemoryTotalBytes
+        state.memoryApp = parts.appBytes
+        state.memoryWired = parts.wiredBytes
+        state.memoryCompressed = parts.compressedBytes
+        state.memoryCached = parts.cachedBytes
+        state.memoryFree = parts.freeBytes
+        state.memorySwap = parts.swapBytes
+        state.allAppsMemoryBytes = footprint
+        state.memorySeries = SeriesWindow.window(memorySeries)
 
         if let volume = cachedVolumes.max(by: { $0.totalBytes < $1.totalBytes }) {
             state.diskFree = volume.freeBytes
@@ -572,24 +684,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.diskReadPerSecond = sampler.diskReadBytesPerSecond
         state.diskWritePerSecond = sampler.diskWriteBytesPerSecond
         state.diskWrittenToday = UInt64(sessionDiskWrite)
-        state.diskSeries = padded(diskSeries)
+        state.diskSeries = SeriesWindow.window(diskSeries)
         state.volumeNames = cachedVolumes.map(\.name)
 
         state.netDownPerSecond = downloadPerSecond > 0 ? downloadPerSecond : snapshot.systemNetworkBytesPerSecond
         state.netUpPerSecond = uploadPerSecond
+        state.sessionBytesDown = sessionDownAccum
+        state.sessionBytesUp = sessionUpAccum
         state.netToday = UInt64(sessionNetBytes)
         state.netLast7Days = state.netToday
         state.netLast30Days = state.netToday
         state.netInterfaceName = cachedInterface.bsdName
         state.netInterfaceKind = cachedInterface.kind
-        state.netSeries = padded(netSeries)
+        state.netSeries = SeriesWindow.window(netSeries)
 
         state.gpuName = cachedGPU.name
         state.gpuPercent = cachedGPU.utilizationPercent
         state.gpuMemoryBytes = cachedGPU.memoryBytes
         state.gpuAverage = gpuCount > 0 ? gpuSum / Double(gpuCount) : nil
         state.gpuPeak = gpuPeak
-        state.gpuSeries = padded(gpuSeries)
+        state.gpuSeries = SeriesWindow.window(gpuSeries)
 
         state.hasBattery = cachedBattery.hasBattery
         state.onBattery = cachedBattery.hasBattery && !cachedBattery.onACPower
@@ -599,7 +713,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.batteryWatts = cachedBattery.watts
         state.batteryHealthPercent = cachedBattery.healthPercent
         state.batteryTemperatureC = cachedBattery.temperatureC
-        state.batterySeries = padded(batterySeries)
+        state.batterySeries = SeriesWindow.window(batterySeries)
 
         let byCPU = snapshot.apps.sorted { $0.cpuPercent > $1.cpuPercent }.prefix(24)
         let byMemory = snapshot.apps.sorted { $0.memoryBytes > $1.memoryBytes }.prefix(24)

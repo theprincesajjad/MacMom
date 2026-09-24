@@ -1,4 +1,5 @@
 import AppKit
+import AppfoldCore
 
 private let chartSampleLimit = 80
 
@@ -17,29 +18,30 @@ private func chartMagnitude(_ sample: Double) -> Double {
 /// Area chart for the CPU, Memory, Disk, Network, GPU, and Battery pages.
 final class AreaChartView: NSView {
     var color: NSColor = .systemBlue { didSet { needsDisplay = true } }
-    /// Raw samples, oldest first. The view scales them to the max of the series (or 1 if the max is 0). Empty draws a calm baseline.
+    /// Fixed top of the plot. 100 for percents, 1 for a fraction of RAM. Nil scales to the series peak.
+    var ceiling: Double? { didSet { needsDisplay = true } }
+    /// Raw samples, oldest first. Empty draws a calm baseline.
     var values: [Double] = [] { didSet { needsDisplay = true } }
 
     override func draw(_ dirtyRect: NSRect) {
         let plot = bounds.insetBy(dx: 4, dy: 4)
         guard plot.width > 2, plot.height > 2 else { return }
 
-        let samples = values.suffix(chartSampleLimit)
-        let peak = chartPeak(samples)
-        let scale = peak > 0 ? peak : 1
+        let samples = Array(values.suffix(chartSampleLimit))
+        let scale = ChartCeiling.scale(samples: samples, upper: ceiling)
         let points = linePoints(samples, in: plot, scale: scale)
 
-        if peak > 0 {
+        if samples.contains(where: { $0.isFinite && $0 > 0 }) {
             fillUnderLine(points, in: plot)
         }
         strokeGrid(in: plot)
         strokeLine(points)
     }
 
-    private func linePoints(_ samples: ArraySlice<Double>, in plot: NSRect, scale: Double) -> [NSPoint] {
+    private func linePoints(_ samples: [Double], in plot: NSRect, scale: Double) -> [NSPoint] {
         if samples.count <= 1 {
             let sample = samples.first ?? 0
-            let y = plot.minY + plot.height * CGFloat(chartMagnitude(sample) / scale)
+            let y = plot.minY + plot.height * CGFloat(min(chartMagnitude(sample), scale) / scale)
             return [NSPoint(x: plot.minX, y: y), NSPoint(x: plot.maxX, y: y)]
         }
 
@@ -48,7 +50,7 @@ final class AreaChartView: NSView {
         let last = CGFloat(samples.count - 1)
         for (offset, sample) in samples.enumerated() {
             let x = plot.minX + plot.width * CGFloat(offset) / last
-            let y = plot.minY + plot.height * CGFloat(chartMagnitude(sample) / scale)
+            let y = plot.minY + plot.height * CGFloat(min(chartMagnitude(sample), scale) / scale)
             points.append(NSPoint(x: x, y: y))
         }
         return points
@@ -57,8 +59,8 @@ final class AreaChartView: NSView {
     private func fillUnderLine(_ points: [NSPoint], in plot: NSRect) {
         guard let first = points.first, let last = points.last else { return }
         guard let gradient = NSGradient(colors: [
-            color.withAlphaComponent(0.02),
-            color.withAlphaComponent(0.28)
+            color.withAlphaComponent(0.05),
+            color.withAlphaComponent(0.40)
         ]) else { return }
 
         let fill = NSBezierPath()
@@ -95,7 +97,7 @@ final class AreaChartView: NSView {
     private func strokeLine(_ points: [NSPoint]) {
         guard let first = points.first else { return }
         let line = NSBezierPath()
-        line.lineWidth = 1.75
+        line.lineWidth = 2
         line.lineCapStyle = .round
         line.lineJoinStyle = .round
         line.move(to: first)
@@ -110,32 +112,35 @@ final class AreaChartView: NSView {
 /// Overview mini bars (CPU, Memory, Disk, Network, Battery). Not an area chart.
 final class SparkBarsView: NSView {
     var color: NSColor = .systemBlue { didSet { needsDisplay = true } }
-    /// Vertical bars like the Overview cards (CPU, Memory, Disk, Network, Battery). Oldest first. Scaled to the max.
+    /// Fixed top of the band. 100 for percents, 1 for a fraction of RAM. Nil scales to the series peak.
+    var ceiling: Double? { didSet { needsDisplay = true } }
+    /// Vertical bars like the Overview cards. Oldest first.
     var values: [Double] = [] { didSet { needsDisplay = true } }
 
     override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let samples = values.suffix(chartSampleLimit)
+        let band = NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8)
+        color.withAlphaComponent(0.13).setFill()
+        band.fill()
+
+        let rect = bounds.insetBy(dx: 6, dy: 6)
+        let samples = Array(values.suffix(chartSampleLimit))
         let count = samples.count
         guard count > 0, rect.width > 2, rect.height > 2 else { return }
 
-        let gap: CGFloat = 3
-        let stretched = (rect.width - gap * CGFloat(max(count - 1, 0))) / CGFloat(count)
-        let barWidth = min(8, max(2, stretched))
-        guard barWidth > 0.4 else { return }
+        let gap: CGFloat = 2
+        let barWidth = (rect.width - gap * CGFloat(max(count - 1, 0))) / CGFloat(count)
+        guard barWidth > 0.6 else { return }
 
-        let peak = chartPeak(samples)
-        let scale = peak > 0 ? peak : 1
-        let total = CGFloat(count) * barWidth + CGFloat(max(count - 1, 0)) * gap
-        var x = rect.minX + max(0, (rect.width - total) / 2)
+        let scale = ChartCeiling.scale(samples: samples, upper: ceiling)
+        var x = rect.minX
         let bars = NSBezierPath()
         for sample in samples {
-            let height = max(2, rect.height * CGFloat(chartMagnitude(sample) / scale))
+            let height = max(2, rect.height * CGFloat(min(chartMagnitude(sample), scale) / scale))
             let bar = NSRect(x: x, y: rect.minY, width: barWidth, height: min(height, rect.height))
-            bars.appendRoundedRect(bar, xRadius: min(2, barWidth / 2), yRadius: min(2, barWidth / 2))
+            bars.appendRoundedRect(bar, xRadius: min(1.5, barWidth / 2), yRadius: min(1.5, barWidth / 2))
             x += barWidth + gap
         }
-        color.withAlphaComponent(0.9).setFill()
+        color.withAlphaComponent(0.92).setFill()
         bars.fill()
     }
 }

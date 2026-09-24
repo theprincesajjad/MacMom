@@ -1,4 +1,5 @@
 import AppKit
+import AppfoldCore
 
 /// Display model for the dashboard. Values are already measured; views only format them.
 struct DashApp: Equatable {
@@ -56,6 +57,8 @@ struct DashState: Equatable {
     var memoryCached: UInt64 = 0
     var memoryFree: UInt64 = 0
     var memorySwap: UInt64 = 0
+    /// Sum of every app's footprint. The type card does not use this number.
+    var allAppsMemoryBytes: UInt64 = 0
     var memorySeries: [Double] = []
 
     var diskFree: UInt64 = 0
@@ -68,6 +71,9 @@ struct DashState: Equatable {
 
     var netDownPerSecond: Double = 0
     var netUpPerSecond: Double = 0
+    /// Bytes counted since this Appfold launch. Combined total lives in `netToday`.
+    var sessionBytesDown: UInt64 = 0
+    var sessionBytesUp: UInt64 = 0
     var netToday: UInt64 = 0
     var netLast7Days: UInt64 = 0
     var netLast30Days: UInt64 = 0
@@ -112,16 +118,7 @@ enum DashTab: Int, CaseIterable {
     case projects
 
     var title: String {
-        switch self {
-        case .overview: return "Overview"
-        case .cpu: return "CPU"
-        case .memory: return "Memory"
-        case .disk: return "Disk"
-        case .network: return "Network"
-        case .gpu: return "GPU"
-        case .battery: return "Battery"
-        case .projects: return "Projects"
-        }
+        PillLayout.titles[rawValue]
     }
 
     var symbolName: String {

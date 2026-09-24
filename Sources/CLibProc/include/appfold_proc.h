@@ -6,6 +6,7 @@
 typedef struct appfold_proc {
     int32_t pid;
     int32_t ppid;
+    int64_t start_unix;
     uint64_t memory_bytes;
     uint64_t cpu_time_ns;
     uint64_t disk_bytes;

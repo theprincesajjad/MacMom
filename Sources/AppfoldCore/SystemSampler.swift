@@ -63,7 +63,8 @@ public final class SystemSampler {
                 cpuPercent: cpu,
                 energy: proc.energy,
                 diskBytes: disk,
-                networkBytes: 0
+                networkBytes: 0,
+                startedAt: proc.startUnix > 0 ? Date(timeIntervalSince1970: TimeInterval(proc.startUnix)) : nil
             ))
         }
         previousCPU = previousCPU.filter { seen.contains($0.key) }
@@ -105,6 +106,7 @@ public final class SystemSampler {
         var diskReadBytes: UInt64
         var diskWriteBytes: UInt64
         var energy: UInt64
+        var startUnix: Int64
     }
 
     private struct HostReading {
@@ -136,7 +138,8 @@ public final class SystemSampler {
                 diskBytes: item.disk_bytes,
                 diskReadBytes: item.disk_read_bytes,
                 diskWriteBytes: item.disk_write_bytes,
-                energy: item.energy
+                energy: item.energy,
+                startUnix: item.start_unix
             ))
         }
         return rows

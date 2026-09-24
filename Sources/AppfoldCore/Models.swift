@@ -11,6 +11,7 @@ public struct ProcessFact: Codable, Equatable {
     public var energy: UInt64
     public var diskBytes: UInt64
     public var networkBytes: UInt64
+    public var startedAt: Date?
 
     public init(
         pid: Int32,
@@ -22,7 +23,8 @@ public struct ProcessFact: Codable, Equatable {
         cpuPercent: Double,
         energy: UInt64,
         diskBytes: UInt64,
-        networkBytes: UInt64
+        networkBytes: UInt64,
+        startedAt: Date? = nil
     ) {
         self.pid = pid
         self.parentPID = parentPID
@@ -34,6 +36,7 @@ public struct ProcessFact: Codable, Equatable {
         self.energy = energy
         self.diskBytes = diskBytes
         self.networkBytes = networkBytes
+        self.startedAt = startedAt
     }
 }
 

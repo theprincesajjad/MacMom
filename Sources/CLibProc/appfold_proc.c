@@ -81,6 +81,7 @@ int appfold_list_processes(appfold_proc *out, int capacity) {
         memset(row, 0, sizeof(*row));
         row->pid = (int32_t)pid;
         row->ppid = bsdBytes == (int)sizeof(bsd) ? (int32_t)bsd.pbi_ppid : 0;
+        row->start_unix = bsdBytes == (int)sizeof(bsd) ? (int64_t)bsd.pbi_start_tvsec : 0;
 
         if (usageOK && usage.ri_phys_footprint > 0) {
             row->memory_bytes = usage.ri_phys_footprint;

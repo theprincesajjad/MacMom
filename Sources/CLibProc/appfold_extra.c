@@ -342,9 +342,10 @@ int appfold_read_memory(appfold_memory *out) {
     if (host_page_size(mach_host_self(), &page) == KERN_SUCCESS && page > 0 &&
         host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&vm, &count) == KERN_SUCCESS) {
         uint64_t bytes = (uint64_t)page;
+        out->app_bytes = (uint64_t)vm.internal_page_count * bytes;
         out->wired_bytes = (uint64_t)vm.wire_count * bytes;
         out->compressed_bytes = (uint64_t)vm.compressor_page_count * bytes;
-        out->cached_bytes = (uint64_t)vm.inactive_count * bytes;
+        out->cached_bytes = (uint64_t)vm.external_page_count * bytes;
         out->free_bytes = (uint64_t)vm.free_count * bytes;
     }
 

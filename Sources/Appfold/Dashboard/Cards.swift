@@ -53,9 +53,10 @@ private func dashLabel(
     field.backgroundColor = .clear
     if let cell = field.cell as? NSTextFieldCell {
         cell.wraps = false
-        cell.isScrollable = true
+        cell.isScrollable = false
         cell.usesSingleLineMode = true
         cell.lineBreakMode = .byTruncatingTail
+        cell.truncatesLastVisibleLine = true
     }
     return field
 }
@@ -63,7 +64,7 @@ private func dashLabel(
 private func metricText(_ text: String, numberSize: CGFloat) -> NSAttributedString {
     let color = DashTheme.primaryText
     let numberFont = NSFont.monospacedDigitSystemFont(ofSize: numberSize, weight: .bold)
-    let unitFont = NSFont.systemFont(ofSize: max(12, (numberSize * 0.40).rounded()), weight: .bold)
+    let unitFont = NSFont.systemFont(ofSize: max(16, (numberSize * 0.48).rounded()), weight: .semibold)
     let style = NSMutableParagraphStyle()
     style.alignment = .left
     style.lineBreakMode = .byTruncatingTail
@@ -155,16 +156,22 @@ final class CardView: NSView {
 final class StatTile: NSView {
     let valueLabel: NSTextField
 
+    private let eyebrowLabel: NSTextField
     private let captionLabel: NSTextField
+    private let factRow = NSStackView()
     private let bodyStack = NSStackView()
     private var textBottom: NSLayoutConstraint?
     private var embeddedChart: NSView?
+    private var factKey = ""
 
     init(symbol: String, title: String, tint: NSColor) {
-        valueLabel = dashLabel("", size: 34, weight: .bold, color: DashTheme.primaryText, mono: true)
+        eyebrowLabel = dashLabel("", size: 12, weight: .medium, color: DashTheme.secondaryText)
+        eyebrowLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        eyebrowLabel.isHidden = true
+        valueLabel = dashLabel("", size: 32, weight: .bold, color: DashTheme.primaryText, mono: true)
         valueLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         valueLabel.setContentHuggingPriority(.defaultHigh, for: .vertical)
-        captionLabel = dashLabel("", size: 13, weight: .regular, color: DashTheme.secondaryText)
+        captionLabel = dashLabel("", size: 12, weight: .regular, color: DashTheme.secondaryText)
         captionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         captionLabel.isHidden = true
         super.init(frame: .zero)
@@ -179,17 +186,37 @@ final class StatTile: NSView {
         let titleLabel = dashLabel(title, size: 14, weight: .semibold, color: tint)
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let header = NSStackView(views: [icon, titleLabel])
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let chevron = NSImageView()
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.imageScaling = .scaleProportionallyDown
+        chevron.image = DashTheme.symbol("chevron.right", pointSize: 10, tint: DashTheme.secondaryText.withAlphaComponent(0.85))
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+
+        let header = NSStackView(views: [icon, titleLabel, spacer, chevron])
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = 6
         header.translatesAutoresizingMaskIntoConstraints = false
 
+        factRow.orientation = .horizontal
+        factRow.alignment = .bottom
+        factRow.distribution = .fillEqually
+        factRow.spacing = 8
+        factRow.translatesAutoresizingMaskIntoConstraints = false
+        factRow.isHidden = true
+
         bodyStack.orientation = .vertical
         bodyStack.alignment = .leading
-        bodyStack.spacing = 2
+        bodyStack.spacing = 4
+        bodyStack.detachesHiddenViews = true
         bodyStack.translatesAutoresizingMaskIntoConstraints = false
+        bodyStack.addArrangedSubview(eyebrowLabel)
         bodyStack.addArrangedSubview(valueLabel)
+        bodyStack.addArrangedSubview(factRow)
         bodyStack.addArrangedSubview(captionLabel)
 
         addSubview(header)
@@ -199,14 +226,20 @@ final class StatTile: NSView {
         textBottom = bottom
         NSLayoutConstraint.activate([
             header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            header.topAnchor.constraint(equalTo: topAnchor, constant: 16),
-            header.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+            header.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             icon.widthAnchor.constraint(equalToConstant: 16),
             icon.heightAnchor.constraint(equalToConstant: 16),
+            chevron.widthAnchor.constraint(equalToConstant: 10),
+            chevron.heightAnchor.constraint(equalToConstant: 12),
 
             bodyStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            bodyStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
-            bodyStack.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 12),
+            bodyStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            bodyStack.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 10),
+            valueLabel.widthAnchor.constraint(lessThanOrEqualTo: bodyStack.widthAnchor),
+            captionLabel.widthAnchor.constraint(lessThanOrEqualTo: bodyStack.widthAnchor),
+            eyebrowLabel.widthAnchor.constraint(lessThanOrEqualTo: bodyStack.widthAnchor),
+            factRow.widthAnchor.constraint(equalTo: bodyStack.widthAnchor),
             bottom,
         ])
     }
@@ -221,10 +254,42 @@ final class StatTile: NSView {
     }
 
     func setValue(_ value: String, caption: String?) {
-        valueLabel.attributedStringValue = metricText(value, numberSize: 34)
+        valueLabel.attributedStringValue = metricText(value, numberSize: 32)
         let text = caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         captionLabel.stringValue = text
         captionLabel.isHidden = text.isEmpty
+    }
+
+    func setEyebrow(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        eyebrowLabel.stringValue = trimmed
+        eyebrowLabel.isHidden = trimmed.isEmpty
+    }
+
+    func setFacts(_ facts: [(label: String, value: String)]) {
+        let key = facts.map { "\($0.label)\u{1}\($0.value)" }.joined(separator: "\u{2}")
+        if key == factKey { return }
+        factKey = key
+        factRow.arrangedSubviews.forEach {
+            factRow.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        factRow.isHidden = facts.isEmpty
+        captionLabel.isHidden = !facts.isEmpty || captionLabel.stringValue.isEmpty
+        for fact in facts.prefix(3) {
+            let label = dashLabel(fact.label, size: 11, weight: .regular, color: DashTheme.secondaryText)
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let value = dashLabel(fact.value, size: 13, weight: .semibold, color: DashTheme.primaryText, mono: true)
+            value.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+            let column = NSStackView(views: [label, value])
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = 1
+            column.translatesAutoresizingMaskIntoConstraints = false
+            factRow.addArrangedSubview(column)
+            label.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
+            value.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
+        }
     }
 
     func embedChart(_ chart: NSView, height: CGFloat) {
@@ -254,44 +319,55 @@ final class HeroChartCard: NSView {
 
     private let tint: NSColor
     private let eyebrowLabel: NSTextField
-    private var sideGrid: NSGridView?
+    private let textColumn = NSStackView()
+    private var sideColumn: NSStackView?
+    private var sideSnapshot: [(String, String)] = []
 
     init(eyebrow: String, tint: NSColor) {
         self.tint = tint
         eyebrowLabel = dashLabel(eyebrow, size: 13, weight: .medium, color: DashTheme.secondaryText)
-        eyebrowLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        valueLabel = dashLabel("", size: 48, weight: .bold, color: DashTheme.primaryText, mono: true)
-        valueLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        valueLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        eyebrowLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        valueLabel = dashLabel("", size: 44, weight: .bold, color: DashTheme.primaryText, mono: true)
+        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        valueLabel.setContentHuggingPriority(.required, for: .horizontal)
         super.init(frame: .zero)
         installCardChrome(self)
 
+        textColumn.orientation = .vertical
+        textColumn.alignment = .leading
+        textColumn.spacing = 8
+        textColumn.translatesAutoresizingMaskIntoConstraints = false
+        textColumn.setContentCompressionResistancePriority(.required, for: .horizontal)
+        textColumn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        textColumn.addArrangedSubview(eyebrowLabel)
+        textColumn.addArrangedSubview(valueLabel)
+
         chartContainer.translatesAutoresizingMaskIntoConstraints = false
         chartContainer.wantsLayer = true
-        chartContainer.layer?.backgroundColor = tint.withAlphaComponent(0).cgColor
-        chartContainer.layer?.masksToBounds = false
+        chartContainer.layer?.backgroundColor = NSColor.clear.cgColor
+        chartContainer.layer?.masksToBounds = true
         chartContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         chartContainer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        addSubview(eyebrowLabel)
-        addSubview(valueLabel)
+        addSubview(textColumn)
         addSubview(chartContainer)
 
+        let chartFloor = chartContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 136)
+        chartFloor.priority = NSLayoutConstraint.Priority(rawValue: 750)
+        let chartWidthFloor = chartContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 160)
+        chartWidthFloor.priority = NSLayoutConstraint.Priority(rawValue: 260)
         NSLayoutConstraint.activate([
-            eyebrowLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22),
-            eyebrowLabel.topAnchor.constraint(equalTo: topAnchor, constant: 18),
-            eyebrowLabel.trailingAnchor.constraint(lessThanOrEqualTo: chartContainer.leadingAnchor, constant: -12),
+            textColumn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22),
+            textColumn.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            textColumn.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -16),
 
-            valueLabel.leadingAnchor.constraint(equalTo: eyebrowLabel.leadingAnchor),
-            valueLabel.topAnchor.constraint(equalTo: eyebrowLabel.bottomAnchor, constant: 2),
-            valueLabel.trailingAnchor.constraint(lessThanOrEqualTo: chartContainer.leadingAnchor, constant: -12),
-            valueLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -16),
-
-            chartContainer.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            chartContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            chartContainer.leadingAnchor.constraint(equalTo: textColumn.trailingAnchor, constant: 20),
             chartContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            chartContainer.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.62),
-            chartContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 148),
+            chartContainer.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            chartContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            chartWidthFloor,
+            chartFloor,
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 168),
         ])
     }
 
@@ -304,52 +380,65 @@ final class HeroChartCard: NSView {
         updateCardShadowPath(self, radius: DashTheme.cardRadius)
     }
 
+    func setEyebrow(_ text: String) {
+        if eyebrowLabel.stringValue != text {
+            eyebrowLabel.stringValue = text
+        }
+    }
+
     func setValue(_ text: String) {
-        valueLabel.attributedStringValue = metricText(text, numberSize: 48)
+        valueLabel.attributedStringValue = metricText(text, numberSize: 44)
     }
 
     func setSideItems(_ items: [(label: String, value: String)]) {
-        sideGrid?.removeFromSuperview()
-        sideGrid = nil
+        let snapshot = items.map { ($0.label, $0.value) }
+        if snapshot.count == sideSnapshot.count,
+           zip(snapshot, sideSnapshot).allSatisfy({ $0.0 == $1.0 && $0.1 == $1.1 }) {
+            return
+        }
+        sideSnapshot = snapshot
+        if let sideColumn {
+            textColumn.removeArrangedSubview(sideColumn)
+            sideColumn.removeFromSuperview()
+        }
+        sideColumn = nil
         guard !items.isEmpty else { return }
 
-        let rows: [[NSView]] = items.map { item in
+        let column = NSStackView()
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 6
+        column.translatesAutoresizingMaskIntoConstraints = false
+        column.setContentCompressionResistancePriority(.required, for: .horizontal)
+        column.setContentHuggingPriority(.required, for: .horizontal)
+        for item in items {
             let label = dashLabel(item.label, size: 13, weight: .regular, color: DashTheme.secondaryText)
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            let value = dashLabel(item.value, size: 13, weight: .semibold, color: DashTheme.primaryText, mono: true, alignment: .right)
-            value.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+            label.setContentCompressionResistancePriority(.required, for: .horizontal)
+            label.setContentHuggingPriority(.required, for: .horizontal)
+            let value = dashLabel(item.value, size: 13, weight: .semibold, color: DashTheme.primaryText, mono: true)
+            value.setContentCompressionResistancePriority(.required, for: .horizontal)
             value.setContentHuggingPriority(.required, for: .horizontal)
-            return [label, value]
+            let row = NSStackView(views: [label, value])
+            row.orientation = .horizontal
+            row.alignment = .firstBaseline
+            row.spacing = 16
+            row.translatesAutoresizingMaskIntoConstraints = false
+            column.addArrangedSubview(row)
         }
-        let grid = NSGridView(views: rows)
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        grid.rowSpacing = 7
-        grid.columnSpacing = 22
-        grid.rowAlignment = .firstBaseline
-        grid.column(at: 0).xPlacement = .leading
-        grid.column(at: 1).xPlacement = .trailing
-        grid.setContentHuggingPriority(.required, for: .horizontal)
-        grid.setContentHuggingPriority(.required, for: .vertical)
-        grid.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        grid.setContentCompressionResistancePriority(.required, for: .vertical)
-        addSubview(grid)
-        NSLayoutConstraint.activate([
-            grid.leadingAnchor.constraint(equalTo: eyebrowLabel.leadingAnchor),
-            grid.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -18),
-            grid.topAnchor.constraint(greaterThanOrEqualTo: valueLabel.bottomAnchor, constant: 14),
-            grid.trailingAnchor.constraint(lessThanOrEqualTo: chartContainer.leadingAnchor, constant: -12),
-        ])
-        sideGrid = grid
+        textColumn.addArrangedSubview(column)
+        sideColumn = column
     }
 }
 
 final class MiniStat: NSView {
     private let valueLabel: NSTextField
     private let captionLabel: NSTextField
+    private let appIcon = NSImageView()
+    private let nameRow = NSStackView()
 
-    init(symbol: String, title: String, tint: NSColor) {
+    init(symbol: String, title: String, tint: NSColor, footer: CGFloat = 0) {
         valueLabel = dashLabel("", size: 22, weight: .bold, color: DashTheme.primaryText, mono: true)
-        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        valueLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         captionLabel = dashLabel("", size: 12, weight: .regular, color: DashTheme.secondaryText)
         captionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         captionLabel.isHidden = true
@@ -378,7 +467,18 @@ final class MiniStat: NSView {
         header.spacing = 8
         header.translatesAutoresizingMaskIntoConstraints = false
 
-        let body = NSStackView(views: [valueLabel, captionLabel])
+        appIcon.translatesAutoresizingMaskIntoConstraints = false
+        appIcon.imageScaling = .scaleProportionallyUpOrDown
+        appIcon.isHidden = true
+        appIcon.setContentHuggingPriority(.required, for: .horizontal)
+        nameRow.orientation = .horizontal
+        nameRow.alignment = .centerY
+        nameRow.spacing = 6
+        nameRow.translatesAutoresizingMaskIntoConstraints = false
+        nameRow.addArrangedSubview(appIcon)
+        nameRow.addArrangedSubview(valueLabel)
+
+        let body = NSStackView(views: [nameRow, captionLabel])
         body.orientation = .vertical
         body.alignment = .leading
         body.spacing = 2
@@ -387,7 +487,8 @@ final class MiniStat: NSView {
         addSubview(header)
         addSubview(body)
 
-        let hug = body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14)
+        let bottomInset = 14 + footer
+        let hug = body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -bottomInset)
         hug.priority = .defaultLow
         NSLayoutConstraint.activate([
             badge.widthAnchor.constraint(equalToConstant: 22),
@@ -396,15 +497,19 @@ final class MiniStat: NSView {
             icon.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 13),
             icon.heightAnchor.constraint(equalToConstant: 13),
+            appIcon.widthAnchor.constraint(equalToConstant: 18),
+            appIcon.heightAnchor.constraint(equalToConstant: 18),
 
             header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             header.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            header.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
 
             body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            body.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 10),
-            body.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -14),
+            body.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -bottomInset),
+            nameRow.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+            captionLabel.widthAnchor.constraint(lessThanOrEqualTo: body.widthAnchor),
             hug,
         ])
     }
@@ -419,8 +524,22 @@ final class MiniStat: NSView {
     }
 
     func setValue(_ value: String, caption: String?) {
+        appIcon.isHidden = true
+        appIcon.image = nil
         valueLabel.attributedStringValue = metricText(value, numberSize: 22)
         let text = caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        captionLabel.stringValue = text
+        captionLabel.isHidden = text.isEmpty
+    }
+
+    /// Top-app tile: icon and name stay inside the card, with the metric underneath.
+    func setApp(name: String, icon: NSImage?, detail: String?) {
+        appIcon.image = icon
+        appIcon.isHidden = icon == nil
+        valueLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        valueLabel.textColor = DashTheme.primaryText
+        valueLabel.stringValue = name
+        let text = detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         captionLabel.stringValue = text
         captionLabel.isHidden = text.isEmpty
     }
@@ -434,6 +553,7 @@ final class AppListCard: NSView {
         var fraction: CGFloat
         var icon: NSImage?
         var selected: Bool
+        var featured: Bool
 
         static func == (lhs: Row, rhs: Row) -> Bool {
             lhs.name == rhs.name
@@ -441,6 +561,7 @@ final class AppListCard: NSView {
                 && lhs.valueText == rhs.valueText
                 && lhs.fraction == rhs.fraction
                 && lhs.selected == rhs.selected
+                && lhs.featured == rhs.featured
                 && lhs.icon === rhs.icon
         }
     }
@@ -451,6 +572,7 @@ final class AppListCard: NSView {
     private let rowsContainer = NSView()
     private var rowViews: [AppRowView] = []
     private var rowsBottom: NSLayoutConstraint?
+    private var rendered: [Row] = []
 
     init(title: String, valueHeader: String, tint: NSColor) {
         self.tint = tint
@@ -492,6 +614,15 @@ final class AppListCard: NSView {
     }
 
     func setRows(_ rows: [Row]) {
+        if rows == rendered, rows.count == rowViews.count { return }
+        rendered = rows
+        if rows.count == rowViews.count {
+            for (view, row) in zip(rowViews, rows) {
+                view.apply(row)
+            }
+            return
+        }
+
         rowsBottom?.isActive = false
         rowsBottom = nil
         rowViews.forEach { $0.removeFromSuperview() }
@@ -499,7 +630,8 @@ final class AppListCard: NSView {
 
         var previous: NSView?
         for (index, row) in rows.enumerated() {
-            let view = AppRowView(row: row, tint: tint)
+            let view = AppRowView(tint: tint)
+            view.apply(row)
             view.translatesAutoresizingMaskIntoConstraints = false
             let rowIndex = index
             view.onClick = { [weak self] in
@@ -509,7 +641,7 @@ final class AppListCard: NSView {
             NSLayoutConstraint.activate([
                 view.leadingAnchor.constraint(equalTo: rowsContainer.leadingAnchor),
                 view.trailingAnchor.constraint(equalTo: rowsContainer.trailingAnchor),
-                view.heightAnchor.constraint(equalToConstant: 56),
+                view.heightAnchor.constraint(equalToConstant: 58),
                 view.topAnchor.constraint(equalTo: previous?.bottomAnchor ?? rowsContainer.topAnchor),
             ])
             previous = view
@@ -526,9 +658,24 @@ final class AppListCard: NSView {
 }
 
 private final class AppRowView: ClickSurface {
+    private let tint: NSColor
     private let plate = NSView()
+    private let iconWell = NSView()
+    private let iconView = NSImageView()
+    private let monogramLabel: NSTextField
+    private let nameLabel: NSTextField
+    private let detailLabel: NSTextField
+    private let valueLabel: NSTextField
+    private let meter: RowMeter
+    private var iconToken: ObjectIdentifier?
 
-    init(row: AppListCard.Row, tint: NSColor) {
+    init(tint: NSColor) {
+        self.tint = tint
+        monogramLabel = dashLabel("", size: 13, weight: .semibold, color: tint, alignment: .center)
+        nameLabel = dashLabel("", size: 14, weight: .semibold, color: DashTheme.primaryText)
+        detailLabel = dashLabel("", size: 12, weight: .regular, color: DashTheme.secondaryText)
+        valueLabel = dashLabel("", size: 13, weight: .semibold, color: DashTheme.primaryText, mono: true, alignment: .right)
+        meter = RowMeter(tint: tint)
         super.init(frame: .zero)
         wantsLayer = true
 
@@ -537,20 +684,20 @@ private final class AppRowView: ClickSurface {
         plate.layer?.backgroundColor = NSColor.white.cgColor
         plate.layer?.cornerRadius = DashTheme.innerRadius
         plate.layer?.masksToBounds = false
-        plate.isHidden = !row.selected
 
-        let iconWell = NSView()
         iconWell.translatesAutoresizingMaskIntoConstraints = false
         iconWell.wantsLayer = true
         iconWell.layer?.cornerRadius = 8
         iconWell.layer?.masksToBounds = true
-        installIcon(row: row, tint: tint, in: iconWell)
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconWell.addSubview(iconView)
+        iconWell.addSubview(monogramLabel)
 
-        let nameLabel = dashLabel(row.name, size: 14, weight: .semibold, color: DashTheme.primaryText)
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let detailLabel = dashLabel(row.detail, size: 12, weight: .regular, color: DashTheme.secondaryText)
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        detailLabel.isHidden = row.detail.isEmpty
+        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        valueLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         let textStack = NSStackView(views: [nameLabel, detailLabel])
         textStack.orientation = .vertical
@@ -560,11 +707,6 @@ private final class AppRowView: ClickSurface {
         textStack.setContentHuggingPriority(.required, for: .vertical)
         textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let valueLabel = dashLabel(row.valueText, size: 13, weight: .semibold, color: DashTheme.primaryText, mono: true, alignment: .right)
-        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        valueLabel.setContentHuggingPriority(.required, for: .horizontal)
-
-        let meter = RowMeter(fraction: row.fraction, tint: tint, emphasized: row.selected)
         meter.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(plate)
@@ -573,7 +715,7 @@ private final class AppRowView: ClickSurface {
         addSubview(valueLabel)
         addSubview(meter)
 
-        let lane = meter.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.34)
+        let lane = meter.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.32)
         lane.priority = NSLayoutConstraint.Priority.defaultHigh
         NSLayoutConstraint.activate([
             plate.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -585,15 +727,20 @@ private final class AppRowView: ClickSurface {
             iconWell.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconWell.widthAnchor.constraint(equalToConstant: 28),
             iconWell.heightAnchor.constraint(equalToConstant: 28),
+            iconView.leadingAnchor.constraint(equalTo: iconWell.leadingAnchor),
+            iconView.trailingAnchor.constraint(equalTo: iconWell.trailingAnchor),
+            iconView.topAnchor.constraint(equalTo: iconWell.topAnchor),
+            iconView.bottomAnchor.constraint(equalTo: iconWell.bottomAnchor),
+            monogramLabel.centerXAnchor.constraint(equalTo: iconWell.centerXAnchor),
+            monogramLabel.centerYAnchor.constraint(equalTo: iconWell.centerYAnchor),
 
             textStack.leadingAnchor.constraint(equalTo: iconWell.trailingAnchor, constant: 10),
             textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            textStack.trailingAnchor.constraint(lessThanOrEqualTo: valueLabel.leadingAnchor, constant: -10),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: meter.leadingAnchor, constant: -12),
 
             meter.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
             meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            meter.heightAnchor.constraint(equalToConstant: 3),
-            meter.leadingAnchor.constraint(greaterThanOrEqualTo: textStack.trailingAnchor, constant: 12),
+            meter.heightAnchor.constraint(equalToConstant: 4),
             lane,
 
             valueLabel.trailingAnchor.constraint(equalTo: meter.trailingAnchor),
@@ -606,30 +753,32 @@ private final class AppRowView: ClickSurface {
         fatalError("init(coder:) has not been implemented")
     }
 
-    private func installIcon(row: AppListCard.Row, tint: NSColor, in well: NSView) {
+    func apply(_ row: AppListCard.Row) {
+        let measured = row.valueText != "—"
+        plate.isHidden = !measured || (!row.selected && !row.featured)
+        nameLabel.stringValue = row.name
+        detailLabel.stringValue = row.detail
+        detailLabel.isHidden = row.detail.isEmpty
+        valueLabel.stringValue = row.valueText
+        meter.fraction = measured ? row.fraction : 0
+        meter.emphasized = measured && (row.selected || row.featured)
         if let icon = row.icon {
-            well.layer?.backgroundColor = NSColor.clear.cgColor
-            let imageView = NSImageView()
-            imageView.translatesAutoresizingMaskIntoConstraints = false
-            imageView.image = icon
-            imageView.imageScaling = .scaleProportionallyUpOrDown
-            well.addSubview(imageView)
-            NSLayoutConstraint.activate([
-                imageView.leadingAnchor.constraint(equalTo: well.leadingAnchor),
-                imageView.trailingAnchor.constraint(equalTo: well.trailingAnchor),
-                imageView.topAnchor.constraint(equalTo: well.topAnchor),
-                imageView.bottomAnchor.constraint(equalTo: well.bottomAnchor),
-            ])
+            let token = ObjectIdentifier(icon)
+            if iconToken != token {
+                iconView.image = icon
+                iconToken = token
+            }
+            iconView.isHidden = false
+            monogramLabel.isHidden = true
+            iconWell.layer?.backgroundColor = NSColor.clear.cgColor
             return
         }
-        well.layer?.backgroundColor = tint.withAlphaComponent(0.16).cgColor
-        let letter = monogram(row.name)
-        let label = dashLabel(letter, size: 13, weight: .semibold, color: tint, alignment: .center)
-        well.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: well.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: well.centerYAnchor),
-        ])
+        iconToken = nil
+        iconView.image = nil
+        iconView.isHidden = true
+        monogramLabel.isHidden = false
+        monogramLabel.stringValue = monogram(row.name)
+        iconWell.layer?.backgroundColor = tint.withAlphaComponent(0.16).cgColor
     }
 
     private func monogram(_ name: String) -> String {
@@ -640,14 +789,12 @@ private final class AppRowView: ClickSurface {
 }
 
 private final class RowMeter: NSView {
-    let fraction: CGFloat
+    var fraction: CGFloat = 0 { didSet { needsDisplay = true } }
+    var emphasized = false { didSet { needsDisplay = true } }
     let tint: NSColor
-    let emphasized: Bool
 
-    init(fraction: CGFloat, tint: NSColor, emphasized: Bool) {
-        self.fraction = fraction
+    init(tint: NSColor) {
         self.tint = tint
-        self.emphasized = emphasized
         super.init(frame: .zero)
         setContentHuggingPriority(.required, for: .vertical)
         setContentCompressionResistancePriority(.required, for: .vertical)

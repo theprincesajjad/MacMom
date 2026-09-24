@@ -45,6 +45,7 @@ public struct VolumeInfo: Equatable {
 }
 
 public struct MemoryBreakdown: Equatable {
+    public var appBytes: UInt64
     public var wiredBytes: UInt64
     public var compressedBytes: UInt64
     public var cachedBytes: UInt64
@@ -53,6 +54,7 @@ public struct MemoryBreakdown: Equatable {
     public var totalBytes: UInt64
 
     public init(
+        appBytes: UInt64,
         wiredBytes: UInt64,
         compressedBytes: UInt64,
         cachedBytes: UInt64,
@@ -60,6 +62,7 @@ public struct MemoryBreakdown: Equatable {
         swapBytes: UInt64,
         totalBytes: UInt64
     ) {
+        self.appBytes = appBytes
         self.wiredBytes = wiredBytes
         self.compressedBytes = compressedBytes
         self.cachedBytes = cachedBytes
@@ -143,6 +146,7 @@ public enum HostExtras {
         var raw = appfold_memory()
         guard appfold_read_memory(&raw) == 0 else {
             return MemoryBreakdown(
+                appBytes: 0,
                 wiredBytes: 0,
                 compressedBytes: 0,
                 cachedBytes: 0,
@@ -152,6 +156,7 @@ public enum HostExtras {
             )
         }
         return MemoryBreakdown(
+            appBytes: raw.app_bytes,
             wiredBytes: raw.wired_bytes,
             compressedBytes: raw.compressed_bytes,
             cachedBytes: raw.cached_bytes,

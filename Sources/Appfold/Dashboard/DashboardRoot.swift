@@ -1,4 +1,5 @@
 import AppKit
+import AppfoldCore
 
 private let dash = "—"
 
@@ -60,10 +61,15 @@ final class DashboardRoot: NSView {
         addSubview(pill)
         addSubview(scroll)
 
+        let pillWidth = pill.widthAnchor.constraint(equalToConstant: PillBar.barWidth())
+        pillWidth.priority = .required
         NSLayoutConstraint.activate([
             pill.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             pill.centerXAnchor.constraint(equalTo: centerXAnchor),
-            pill.widthAnchor.constraint(equalToConstant: 980),
+            pill.heightAnchor.constraint(equalToConstant: 40),
+            pill.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 78),
+            pill.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+            pillWidth,
             scroll.topAnchor.constraint(equalTo: pill.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -240,6 +246,22 @@ private enum Format {
         return decimal(gb, digits: digits) + " GB"
     }
 
+    /// One-decimal gigabytes that add up. The hero is the sum of the rounded parts.
+    static func memoryTrio(app: UInt64, wired: UInt64, compressed: UInt64) -> (hero: String, app: String, wired: String, compressed: String) {
+        func tenth(_ bytes: UInt64) -> Double {
+            (Double(bytes) / 1_073_741_824 * 10).rounded() / 10
+        }
+        let appGB = tenth(app)
+        let wiredGB = tenth(wired)
+        let compressedGB = tenth(compressed)
+        return (
+            hero: decimal(appGB + wiredGB + compressedGB, digits: 1) + " GB",
+            app: decimal(appGB, digits: 1) + " GB",
+            wired: decimal(wiredGB, digits: 1) + " GB",
+            compressed: decimal(compressedGB, digits: 1) + " GB"
+        )
+    }
+
     static func memoryAmount(_ value: UInt64) -> String {
         value >= 1_073_741_824 ? memoryGB(value) : bytes(value)
     }
@@ -354,6 +376,26 @@ private func processDetail(_ count: Int) -> String {
     count == 1 ? "1 process" : "\(count) processes"
 }
 
+private func volumeTitle(_ raw: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty || trimmed == "/" {
+        return bootVolumeName
+    }
+    return trimmed
+}
+
+private let bootVolumeName: String = {
+    let name = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeNameKey]).volumeName
+    if let name, !name.isEmpty { return name }
+    return "Boot"
+}()
+
+private func diskEyebrow(_ state: DashState) -> String {
+    let total = state.diskFree + state.diskUsed
+    guard total > 0 else { return "Free" }
+    return "Free of \(Format.diskGB(total))"
+}
+
 private func cardInset(_ content: NSView, inset: CGFloat = 16) -> CardView {
     let card = CardView()
     card.fillColor = DashTheme.card
@@ -419,16 +461,20 @@ private final class OverviewPage: NSObject {
 
         let sparks = [cpuSpark, memorySpark, gpuSpark, diskSpark, networkSpark, batterySpark]
         let tabs: [DashTab] = [.cpu, .memory, .gpu, .disk, .network, .battery]
+        let ceilings: [Double?] = [100, 1, 100, nil, nil, 100]
         for (spark, tab) in zip(sparks, tabs) {
             spark.color = DashTheme.accent(tab)
             spark.translatesAutoresizingMaskIntoConstraints = false
         }
-        cpuTile.embedChart(cpuSpark, height: 44)
-        memoryTile.embedChart(memorySpark, height: 44)
-        gpuTile.embedChart(gpuSpark, height: 44)
-        diskTile.embedChart(diskSpark, height: 44)
-        networkTile.embedChart(networkSpark, height: 44)
-        batteryTile.embedChart(batterySpark, height: 44)
+        for (spark, ceiling) in zip(sparks, ceilings) {
+            spark.ceiling = ceiling
+        }
+        cpuTile.embedChart(cpuSpark, height: 42)
+        memoryTile.embedChart(memorySpark, height: 42)
+        gpuTile.embedChart(gpuSpark, height: 42)
+        diskTile.embedChart(diskSpark, height: 42)
+        networkTile.embedChart(networkSpark, height: 42)
+        batteryTile.embedChart(batterySpark, height: 42)
 
         let typeCard = Self.donutCard(
             symbol: DashTab.memory.symbolName,
@@ -466,39 +512,60 @@ private final class OverviewPage: NSObject {
     }
 
     func update(_ state: DashState) {
-        cpuTile.setValue(
-            Format.percent(state.cpuNow),
-            caption: "User \(Format.percent(state.cpuUserShare)) · System \(Format.percent(state.cpuSystemShare)) · Average \(Format.percent(state.cpuAverage))"
-        )
+        cpuTile.setEyebrow("Now")
+        cpuTile.setValue(Format.percent(state.cpuNow), caption: nil)
+        cpuTile.setFacts([
+            (label: "User", value: Format.percent(state.cpuUserShare)),
+            (label: "System", value: Format.percent(state.cpuSystemShare)),
+            (label: "Average", value: Format.percent(state.cpuAverage)),
+        ])
         cpuSpark.values = state.cpuSeries
 
-        var memoryCaption = "Free \(Format.bytes(state.memoryFree)) · Swap \(Format.bytes(state.memorySwap))"
-        if state.memoryTotal > 0 {
-            memoryCaption = "In use of \(Format.memoryGB(state.memoryTotal)) · " + memoryCaption
-        }
-        memoryTile.setValue(Format.memoryGB(state.memoryUsed), caption: memoryCaption)
+        let memory = Format.memoryTrio(app: state.memoryApp, wired: state.memoryWired, compressed: state.memoryCompressed)
+        memoryTile.setEyebrow(state.memoryTotal > 0 ? "In use of \(Format.memoryGB(state.memoryTotal))" : "In use")
+        memoryTile.setValue(memory.hero, caption: nil)
+        memoryTile.setFacts([
+            (label: "App", value: memory.app),
+            (label: "Wired", value: memory.wired),
+            (label: "Compressed", value: memory.compressed),
+        ])
         memorySpark.values = state.memorySeries
 
-        gpuTile.setValue(Format.percent(state.gpuPercent), caption: state.gpuName.isEmpty ? nil : state.gpuName)
+        gpuTile.setEyebrow(state.gpuName.isEmpty ? "GPU" : state.gpuName)
+        gpuTile.setValue(Format.percent(state.gpuPercent), caption: nil)
+        gpuTile.setFacts([
+            (label: "Memory", value: state.gpuMemoryBytes.map(Format.bytes) ?? dash),
+            (label: "Average", value: Format.percent(state.gpuAverage)),
+            (label: "Peak", value: Format.percent(state.gpuPeak)),
+        ])
         gpuSpark.values = state.gpuSeries
 
-        diskTile.setValue(
-            Format.diskGB(state.diskUsed),
-            caption: "Free \(Format.diskGB(state.diskFree)) · Read \(Format.rate(state.diskReadPerSecond)) · Write \(Format.rate(state.diskWritePerSecond))"
-        )
+        diskTile.setEyebrow(diskEyebrow(state))
+        diskTile.setValue(Format.diskGB(state.diskFree), caption: nil)
+        diskTile.setFacts([
+            (label: "Reading", value: Format.rate(state.diskReadPerSecond)),
+            (label: "Writing", value: Format.rate(state.diskWritePerSecond)),
+            (label: "Session", value: Format.bytes(state.diskWrittenToday)),
+        ])
         diskSpark.values = state.diskSeries
 
-        networkTile.setValue(
-            Format.rate(state.netDownPerSecond),
-            caption: "Up \(Format.rate(state.netUpPerSecond)) · Today \(Format.bytes(state.netToday))"
-        )
+        networkTile.setEyebrow("Downloading")
+        networkTile.setValue(Format.rate(state.netDownPerSecond), caption: nil)
+        networkTile.setFacts([
+            (label: "Uploading", value: Format.rate(state.netUpPerSecond)),
+            (label: "Session", value: Format.bytes(state.netToday)),
+            (label: "7 days", value: dash),
+        ])
         networkSpark.values = state.netSeries
 
-        let batteryValue = state.hasBattery ? Format.percent(state.batteryPercent) : "Power Adapter"
-        batteryTile.setValue(
-            batteryValue,
-            caption: "\(Format.watts(state.batteryWatts)) · Health \(Format.percent(state.batteryHealthPercent))"
-        )
+        let onBattery = state.hasBattery && state.onBattery
+        batteryTile.setEyebrow(state.hasBattery ? (onBattery ? "On battery" : "Power adapter") : "No battery")
+        batteryTile.setValue(state.hasBattery ? Format.percent(state.batteryPercent) : dash, caption: nil)
+        batteryTile.setFacts([
+            (label: "Remaining", value: Format.remaining(state.batteryMinutesRemaining)),
+            (label: "Power", value: Format.watts(state.batteryWatts)),
+            (label: "Health", value: Format.percent(state.batteryHealthPercent)),
+        ])
         batterySpark.values = state.batterySeries
 
         updateTypeDonut(state)
@@ -507,15 +574,16 @@ private final class OverviewPage: NSObject {
     }
 
     private func updateTypeDonut(_ state: DashState) {
-        let parts: [(String, UInt64, NSColor)] = [
-            ("App", state.memoryApp, SlicePalette.app),
-            ("Wired", state.memoryWired, SlicePalette.wired),
-            ("Compressed", state.memoryCompressed, SlicePalette.compressed),
-            ("Cached", state.memoryCached, SlicePalette.cached),
-            ("Free", state.memoryFree, SlicePalette.free),
+        let memory = Format.memoryTrio(app: state.memoryApp, wired: state.memoryWired, compressed: state.memoryCompressed)
+        let labeled: [(String, UInt64, NSColor, String)] = [
+            ("App", state.memoryApp, SlicePalette.app, memory.app),
+            ("Wired", state.memoryWired, SlicePalette.wired, memory.wired),
+            ("Compressed", state.memoryCompressed, SlicePalette.compressed, memory.compressed),
+            ("Cached", state.memoryCached, SlicePalette.cached, Format.bytes(state.memoryCached)),
+            ("Free", state.memoryFree, SlicePalette.free, Format.bytes(state.memoryFree)),
         ].filter { $0.1 > 0 }
-        let sum = parts.reduce(UInt64(0)) { $0 + $1.1 }
-        typeDonut.slices = parts.map { part in
+        let sum = labeled.reduce(UInt64(0)) { $0 + $1.1 }
+        typeDonut.slices = labeled.map { part in
             DonutChartView.Slice(fraction: sum > 0 ? CGFloat(Double(part.1) / Double(sum)) : 0, color: part.2)
         }
         if state.memoryTotal > 0 {
@@ -525,17 +593,28 @@ private final class OverviewPage: NSObject {
             typeDonut.centerTitle = dash
         }
         typeDonut.centerSubtitle = "in use"
-        typeLegend.setEntries(parts.map { ($0.2, nil, $0.0, Format.bytes($0.1)) })
+        typeLegend.setEntries(labeled.map { ($0.2, nil, $0.0, $0.3) })
     }
 
     private func updateAppDonut(_ state: DashState) {
         let ranked = state.apps
             .map { (name: $0.name, amount: Double($0.memoryBytes), icon: $0.icon) }
             .sorted { $0.amount > $1.amount }
-        let parts = topParts(ranked, limit: 4, palette: SlicePalette.apps) { Format.memoryAmount(UInt64($0)) }
+        var parts = topParts(ranked, limit: 4, palette: SlicePalette.apps) { Format.memoryAmount(UInt64($0)) }
+        let shown = parts.reduce(0) { $0 + $1.amount }
+        let full = Double(state.allAppsMemoryBytes)
+        if full > shown + 0.5 {
+            let extra = full - shown
+            if let index = parts.lastIndex(where: { $0.name == "Other" }) {
+                parts[index].amount += extra
+                parts[index].valueText = Format.memoryAmount(UInt64(parts[index].amount.rounded()))
+            } else {
+                parts.append(SlicePart(color: SlicePalette.other, icon: nil, name: "Other", amount: extra, valueText: Format.memoryAmount(UInt64(extra.rounded()))))
+            }
+        }
         apply(parts, to: appDonut, legend: appLegend)
-        let sum = state.apps.reduce(UInt64(0)) { $0 + $1.memoryBytes }
-        appDonut.centerTitle = state.apps.isEmpty ? dash : Format.memoryAmount(sum)
+        let center = state.allAppsMemoryBytes > 0 ? state.allAppsMemoryBytes : UInt64(shown.rounded())
+        appDonut.centerTitle = center > 0 ? Format.memoryAmount(center) : dash
         appDonut.centerSubtitle = "all apps"
     }
 
@@ -688,6 +767,14 @@ private final class MetricPage {
         let tint = DashTheme.accent(tab)
         hero = HeroChartCard(eyebrow: Self.eyebrow(tab, state), tint: tint)
         chart.color = tint
+        switch tab {
+        case .cpu, .gpu, .battery:
+            chart.ceiling = 100
+        case .memory:
+            chart.ceiling = 1
+        default:
+            chart.ceiling = nil
+        }
         chart.translatesAutoresizingMaskIntoConstraints = false
         hero.chartContainer.addSubview(chart)
         NSLayoutConstraint.activate([
@@ -745,80 +832,91 @@ private final class MetricPage {
     }
 
     private func updateCPU(_ state: DashState) {
+        hero.setEyebrow("Now")
         hero.setValue(Format.percent(state.cpuNow))
         hero.setSideItems([
-            (label: "Average", value: Format.percent(state.cpuAverage)),
+            (label: "Average today", value: Format.percent(state.cpuAverage)),
             (label: "Load", value: Format.load(state.cpuLoad)),
         ])
         chart.values = state.cpuSeries
         minis[0].setValue(Format.percent(state.cpuUserShare), caption: "Your apps")
         minis[1].setValue(Format.percent(state.cpuSystemShare), caption: "macOS")
-        minis[2].setValue(
-            "\(state.cpuCores)",
-            caption: "\(state.performanceCores) performance · \(state.efficiencyCores) efficiency"
-        )
+        let coreCaption = state.efficiencyCores > 0
+            ? "\(state.performanceCores) P · \(state.efficiencyCores) E"
+            : "\(state.cpuCores) cores"
+        minis[2].setValue("\(state.cpuCores)", caption: coreCaption)
         let top = topApp(state.apps) { $0.cpuPercent }
-        minis[3].setValue(top?.name ?? dash, caption: top.map { Format.percent($0.cpuPercent) })
+        minis[3].setApp(name: top?.name ?? dash, icon: top?.icon, detail: top.map { Format.percent($0.cpuPercent) })
         setAppRows(state.apps.sorted { $0.cpuPercent > $1.cpuPercent }, state: state) { app, topValue in
             (Format.percent(app.cpuPercent), share(app.cpuPercent, top: topValue, floor: 1), app.cpuPercent)
         }
     }
 
     private func updateMemory(_ state: DashState) {
-        hero.setValue(Format.memoryGB(state.memoryUsed))
+        let memory = Format.memoryTrio(app: state.memoryApp, wired: state.memoryWired, compressed: state.memoryCompressed)
+        hero.setValue(memory.hero)
         hero.setSideItems([
             (label: "Free", value: Format.bytes(state.memoryFree)),
             (label: "Swap", value: Format.bytes(state.memorySwap)),
         ])
         chart.values = state.memorySeries
         let total = Double(state.memoryTotal)
-        minis[0].setValue(Format.bytes(state.memoryApp), caption: nil)
-        minis[1].setValue(Format.bytes(state.memoryWired), caption: nil)
-        minis[2].setValue(Format.bytes(state.memoryCompressed), caption: nil)
+        minis[0].setValue(memory.app, caption: nil)
+        minis[1].setValue(memory.wired, caption: nil)
+        minis[2].setValue(memory.compressed, caption: nil)
         meters[0]?.fraction = total > 0 ? CGFloat(min(1, Double(state.memoryApp) / total)) : 0
         meters[1]?.fraction = total > 0 ? CGFloat(min(1, Double(state.memoryWired) / total)) : 0
         meters[2]?.fraction = total > 0 ? CGFloat(min(1, Double(state.memoryCompressed) / total)) : 0
         let top = topApp(state.apps) { Double($0.memoryBytes) }
-        minis[3].setValue(top?.name ?? dash, caption: top.map { Format.bytes($0.memoryBytes) })
+        minis[3].setApp(name: top?.name ?? dash, icon: top?.icon, detail: top.map { Format.bytes($0.memoryBytes) })
         setAppRows(state.apps.sorted { $0.memoryBytes > $1.memoryBytes }, state: state) { app, topValue in
             (Format.bytes(app.memoryBytes), share(Double(app.memoryBytes), top: topValue), Double(app.memoryBytes))
         }
     }
 
     private func updateDisk(_ state: DashState) {
-        hero.setValue(Format.diskGB(state.diskUsed))
+        hero.setEyebrow(diskEyebrow(state))
+        hero.setValue(Format.diskGB(state.diskFree))
         hero.setSideItems([
-            (label: "Free", value: Format.diskGB(state.diskFree)),
-            (label: "Written today", value: Format.bytes(state.diskWrittenToday)),
+            (label: "Used", value: Format.diskGB(state.diskUsed)),
+            (label: "Session", value: Format.bytes(state.diskWrittenToday)),
         ])
         chart.values = state.diskSeries
         minis[0].setValue(Format.rate(state.diskReadPerSecond), caption: nil)
         minis[1].setValue(Format.rate(state.diskWritePerSecond), caption: nil)
-        let names = state.volumeNames.filter { !$0.isEmpty }
-        minis[2].setValue("\(state.volumeNames.count)", caption: names.isEmpty ? nil : names.joined(separator: ", "))
+        let names = state.volumeNames.map(volumeTitle).filter { !$0.isEmpty }
+        let volumeCaption: String?
+        if names.isEmpty {
+            volumeCaption = nil
+        } else if names.count == 1 {
+            volumeCaption = names[0]
+        } else {
+            volumeCaption = "\(names[0]) +\(names.count - 1)"
+        }
+        minis[2].setValue("\(names.count)", caption: volumeCaption)
         let top = topApp(state.apps) { $0.diskBytesPerSecond }
-        minis[3].setValue(top?.name ?? dash, caption: top.map { Format.rate($0.diskBytesPerSecond) })
+        minis[3].setApp(name: top?.name ?? dash, icon: top?.icon, detail: top.map { Format.rate($0.diskBytesPerSecond) })
         setAppRows(state.apps.sorted { $0.diskBytesPerSecond > $1.diskBytesPerSecond }, state: state) { app, topValue in
             (Format.rate(app.diskBytesPerSecond), share(app.diskBytesPerSecond, top: topValue), app.diskBytesPerSecond)
         }
     }
 
     private func updateNetwork(_ state: DashState) {
+        hero.setEyebrow("Downloading")
         hero.setValue(Format.rate(state.netDownPerSecond))
         hero.setSideItems([
-            (label: "Today", value: Format.bytes(state.netToday)),
-            (label: "Last 30 days", value: Format.bytes(state.netLast30Days)),
+            (label: "Session", value: Format.bytes(state.netToday)),
+            (label: "Last 30 days", value: dash),
         ])
         chart.values = state.netSeries
         minis[0].setValue(Format.rate(state.netUpPerSecond), caption: nil)
-        minis[1].setValue(Format.bytes(state.netLast7Days), caption: nil)
+        minis[1].setValue(dash, caption: nil)
         let kind = state.netInterfaceKind.isEmpty ? dash : state.netInterfaceKind
         let bsd = state.netInterfaceName.isEmpty ? nil : state.netInterfaceName
         minis[2].setValue(kind, caption: bsd)
-        let top = topApp(state.apps) { $0.networkBytesPerSecond }
-        minis[3].setValue(top?.name ?? dash, caption: top.map { Format.rate($0.networkBytesPerSecond) })
-        setAppRows(state.apps.sorted { $0.networkBytesPerSecond > $1.networkBytesPerSecond }, state: state) { app, topValue in
-            (Format.rate(app.networkBytesPerSecond), share(app.networkBytesPerSecond, top: topValue), app.networkBytesPerSecond)
+        minis[3].setValue(dash, caption: "Not provided")
+        setAppRows(state.apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }, state: state) { _, _ in
+            (dash, 0, 0)
         }
     }
 
@@ -832,12 +930,20 @@ private final class MetricPage {
         minis[0].setValue(state.gpuMemoryBytes.map(Format.bytes) ?? dash, caption: nil)
         minis[1].setValue(Format.percent(state.gpuAverage), caption: nil)
         minis[2].setValue(Format.percent(state.gpuPeak), caption: nil)
-        let top = topApp(state.apps) { $0.gpuPercent ?? 0 }
-        minis[3].setValue(top?.name ?? dash, caption: top?.gpuPercent.map(Format.percent) ?? (top == nil ? nil : dash))
-        setAppRows(state.apps.sorted { ($0.gpuPercent ?? 0) > ($1.gpuPercent ?? 0) }, state: state) { app, topValue in
-            let metric = app.gpuPercent ?? 0
-            let text = app.gpuPercent.map(Format.percent) ?? dash
-            return (text, share(metric, top: topValue), metric)
+        let measured = state.apps.contains { $0.gpuPercent != nil }
+        if measured {
+            let top = topApp(state.apps) { $0.gpuPercent ?? -1 }
+            minis[3].setApp(name: top?.name ?? dash, icon: top?.icon, detail: top?.gpuPercent.map(Format.percent) ?? dash)
+            setAppRows(state.apps.sorted { ($0.gpuPercent ?? -1) > ($1.gpuPercent ?? -1) }, state: state) { app, topValue in
+                let metric = app.gpuPercent ?? 0
+                let text = app.gpuPercent.map(Format.percent) ?? dash
+                return (text, app.gpuPercent == nil ? 0 : share(metric, top: topValue), metric)
+            }
+        } else {
+            minis[3].setValue(dash, caption: "Not provided")
+            setAppRows(state.apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }, state: state) { _, _ in
+                (dash, 0, 0)
+            }
         }
     }
 
@@ -857,27 +963,20 @@ private final class MetricPage {
         }
         minis[2].setValue(Format.temperature(state.batteryTemperatureC), caption: nil)
         let anyWatts = state.apps.contains { $0.powerWatts != nil }
-        let top = topApp(state.apps) { app in
-            anyWatts ? (app.powerWatts ?? -1) : app.cpuPercent
-        }
-        let caption: String?
-        if let watts = top?.powerWatts {
-            caption = Format.watts(watts)
-        } else if let top, !anyWatts {
-            caption = Format.percent(top.cpuPercent)
-        } else {
-            caption = top == nil ? nil : dash
-        }
-        minis[3].setValue(top?.name ?? dash, caption: caption)
-        let ranked = state.apps.sorted { lhs, rhs in
-            if anyWatts {
-                return (lhs.powerWatts ?? -1) > (rhs.powerWatts ?? -1)
+        if anyWatts {
+            let top = topApp(state.apps) { $0.powerWatts ?? -1 }
+            minis[3].setApp(name: top?.name ?? dash, icon: top?.icon, detail: top?.powerWatts.map(Format.watts) ?? dash)
+            let ranked = state.apps.sorted { ($0.powerWatts ?? -1) > ($1.powerWatts ?? -1) }
+            setAppRows(ranked, state: state) { app, topValue in
+                let metric = app.powerWatts ?? 0
+                let text = Format.watts(app.powerWatts)
+                return (text, app.powerWatts == nil ? 0 : share(metric, top: topValue), metric)
             }
-            return lhs.cpuPercent > rhs.cpuPercent
-        }
-        setAppRows(ranked, state: state) { app, topValue in
-            let metric = app.powerWatts ?? 0
-            return (Format.watts(app.powerWatts), share(metric, top: topValue), metric)
+        } else {
+            minis[3].setValue(dash, caption: "Not provided")
+            setAppRows(state.apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }, state: state) { _, _ in
+                (dash, 0, 0)
+            }
         }
     }
 
@@ -888,7 +987,7 @@ private final class MetricPage {
     ) {
         sortedApps = apps
         let topValue = apps.first.map { metric($0, 0).2 } ?? 0
-        let rows = apps.map { app in
+        let rows = apps.enumerated().map { index, app in
             let (text, fraction, _) = metric(app, topValue)
             return AppListCard.Row(
                 name: app.name,
@@ -896,7 +995,8 @@ private final class MetricPage {
                 valueText: text,
                 fraction: fraction,
                 icon: app.icon,
-                selected: app.id == state.selectedAppID
+                selected: app.id == state.selectedAppID,
+                featured: index == 0 && text != dash && fraction > 0
             )
         }
         list.setRows(rows)
@@ -959,7 +1059,7 @@ private final class MetricPage {
         case .memory:
             return state.memoryTotal > 0 ? "In use of \(Format.memoryGB(state.memoryTotal))" : "In use"
         case .disk:
-            return "Used"
+            return diskEyebrow(state)
         case .network:
             return "Downloading"
         case .gpu:
@@ -1002,7 +1102,7 @@ private final class MetricPage {
             specs = []
         }
         return specs.map { symbol, title, wantsMeter in
-            let mini = MiniStat(symbol: symbol, title: title, tint: tint)
+            let mini = MiniStat(symbol: symbol, title: title, tint: tint, footer: wantsMeter ? 14 : 0)
             guard wantsMeter else { return (mini, nil) }
             let meter = MeterBar(frame: .zero)
             meter.color = tint
@@ -1176,8 +1276,9 @@ private final class ProjectsPage {
         } else if ports.isEmpty {
             detail = "Stopping them frees \(Format.bytes(memory))."
         } else {
-            let list = ports.map(String.init).joined(separator: ", ")
-            detail = "Stopping them frees \(Format.bytes(memory)) and ports \(list)."
+            let shown = ports.prefix(6).map(String.init).joined(separator: ", ")
+            let extra = ports.count > 6 ? " +\(ports.count - 6) more" : ""
+            detail = "Stopping them frees \(Format.bytes(memory)) and ports \(shown)\(extra)."
         }
         banner.set(title: title, detail: detail, showsStop: !idlePIDs.isEmpty)
 
@@ -1239,6 +1340,8 @@ private final class ProjectRow: NSView {
         ports.alignment = .centerY
         ports.spacing = 4
         ports.translatesAutoresizingMaskIntoConstraints = false
+        ports.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        ports.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
         let names = NSStackView(views: [nameField, runtimeField])
         names.orientation = .vertical
@@ -1289,29 +1392,39 @@ private final class ProjectRow: NSView {
             shownPorts = portNumbers
             rebuildPorts(portNumbers)
         }
-        if let idle = project.idleMinutes {
-            status.isHidden = false
-            status.set(
-                text: "idle \(Format.compact(minutes: idle))",
-                fill: DashTheme.secondaryText.withAlphaComponent(0.12),
-                foreground: DashTheme.secondaryText
-            )
-        } else if project.cpuPercent >= 2 {
-            status.isHidden = false
+        let resolved = ProjectStatus.resolve(
+            cpuPercent: project.cpuPercent,
+            idleMinutes: project.idleMinutes,
+            uptime: project.uptime
+        )
+        status.isHidden = false
+        switch resolved {
+        case .working:
             status.set(
                 text: "working",
                 fill: NSColor.systemGreen.withAlphaComponent(0.16),
                 foreground: NSColor.systemGreen
             )
-        } else if let uptime = project.uptime {
-            status.isHidden = false
+        case .idle(let minutes):
             status.set(
-                text: "up \(Format.compact(interval: uptime))",
+                text: "idle \(Format.compact(minutes: minutes))",
                 fill: DashTheme.secondaryText.withAlphaComponent(0.12),
                 foreground: DashTheme.secondaryText
             )
-        } else {
-            status.isHidden = true
+        case .uptime(let seconds):
+            let minutes = Int(seconds / 60)
+            let text = minutes > 0 ? "up \(Format.compact(minutes: minutes))" : "up <1m"
+            status.set(
+                text: text,
+                fill: DashTheme.secondaryText.withAlphaComponent(0.12),
+                foreground: DashTheme.secondaryText
+            )
+        case .quiet:
+            status.set(
+                text: "idle",
+                fill: DashTheme.secondaryText.withAlphaComponent(0.12),
+                foreground: DashTheme.secondaryText
+            )
         }
     }
 

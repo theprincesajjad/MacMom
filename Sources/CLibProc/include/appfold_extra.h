@@ -30,6 +30,7 @@ typedef struct appfold_volume {
 } appfold_volume;
 
 typedef struct appfold_memory {
+    uint64_t app_bytes;
     uint64_t wired_bytes;
     uint64_t compressed_bytes;
     uint64_t cached_bytes;

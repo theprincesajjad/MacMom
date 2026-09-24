@@ -1,6 +1,23 @@
 import AppKit
+import AppfoldCore
 
 final class PillBar: NSView {
+    static let titleFont = NSFont.systemFont(ofSize: PillLayout.titlePointSize, weight: .medium)
+
+    static func textWidths() -> [CGFloat] {
+        DashTab.allCases.map { tab in
+            (tab.title as NSString).size(withAttributes: [.font: titleFont]).width
+        }
+    }
+
+    static func barWidth() -> CGFloat {
+        PillLayout.barWidth(textWidths: textWidths())
+    }
+
+    static func minimumWindowWidth() -> CGFloat {
+        PillLayout.windowMinimumWidth(textWidths: textWidths())
+    }
+
     var selected: DashTab = .overview {
         didSet {
             guard oldValue != selected else { return }
@@ -11,38 +28,18 @@ final class PillBar: NSView {
     var onChange: ((DashTab) -> Void)?
 
     private let capsule = NSView()
-    private let stack = NSStackView()
     private var items: [PillItem] = []
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.masksToBounds = false
         if let aqua = NSAppearance(named: .aqua) {
             appearance = aqua
         }
-
         capsule.wantsLayer = true
         capsule.layer?.backgroundColor = DashTheme.card.cgColor
-        capsule.layer?.cornerRadius = Metric.barHeight / 2
-        capsule.layer?.masksToBounds = false
-        DashTheme.applyCardShadow(to: capsule)
-        capsule.translatesAutoresizingMaskIntoConstraints = false
-        capsule.setContentHuggingPriority(.required, for: .horizontal)
-        capsule.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.distribution = .fillEqually
-        stack.spacing = Metric.spacing
-        stack.edgeInsets = NSEdgeInsets(top: Metric.padY, left: Metric.padX, bottom: Metric.padY, right: Metric.padX)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setContentHuggingPriority(.required, for: .horizontal)
-        stack.setContentCompressionResistancePriority(.required, for: .horizontal)
-
+        capsule.layer?.masksToBounds = true
         addSubview(capsule)
-        capsule.addSubview(stack)
-
         for tab in DashTab.allCases {
             let item = PillItem(tab: tab)
             item.onClick = { [weak self] in
@@ -51,46 +48,37 @@ final class PillBar: NSView {
                 self.onChange?(tab)
             }
             items.append(item)
-            stack.addArrangedSubview(item)
+            capsule.addSubview(item)
         }
-
-        NSLayoutConstraint.activate([
-            capsule.leadingAnchor.constraint(equalTo: leadingAnchor),
-            capsule.trailingAnchor.constraint(equalTo: trailingAnchor),
-            capsule.topAnchor.constraint(equalTo: topAnchor),
-            capsule.bottomAnchor.constraint(equalTo: bottomAnchor),
-            capsule.heightAnchor.constraint(equalToConstant: Metric.barHeight),
-
-            stack.leadingAnchor.constraint(equalTo: capsule.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: capsule.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: capsule.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: capsule.bottomAnchor),
-        ])
-
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
         applySelection()
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
+    required init?(coder: NSCoder) { nil }
 
     override var intrinsicContentSize: NSSize {
-        let content = items.reduce(CGFloat(0)) { $0 + $1.intrinsicContentSize.width }
-        let gaps = Metric.spacing * CGFloat(max(items.count - 1, 0))
-        return NSSize(width: content + gaps + Metric.padX * 2, height: Metric.barHeight)
+        NSSize(width: Self.barWidth(), height: 40)
     }
+
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override func layout() {
         super.layout()
-        let radius = capsule.bounds.height / 2
-        capsule.layer?.cornerRadius = radius
-        guard capsule.bounds.width > 1, capsule.bounds.height > 1 else { return }
-        capsule.layer?.shadowPath = CGPath(
-            roundedRect: capsule.bounds,
-            cornerWidth: radius,
-            cornerHeight: radius,
-            transform: nil
-        )
+        let measured = Self.textWidths()
+        let allotted = PillLayout.allottedTextWidths(textWidths: measured, contentWidth: bounds.width)
+        let itemWidths = allotted.map { PillLayout.itemWidth(textWidth: $0) }
+        let bar = PillLayout.barWidth(textWidths: allotted)
+        let originX = max(0, (bounds.width - bar) / 2)
+        capsule.frame = NSRect(x: originX, y: 0, width: min(bar, bounds.width), height: bounds.height)
+        capsule.layer?.cornerRadius = capsule.bounds.height / 2
+        var x = PillLayout.padX
+        for (index, item) in items.enumerated() {
+            let width = itemWidths[index]
+            item.frame = NSRect(x: x, y: 3, width: width, height: max(28, bounds.height - 6))
+            item.placeTitle(textWidth: allotted[index])
+            x += width + PillLayout.spacing
+        }
     }
 
     private func applySelection() {
@@ -100,86 +88,56 @@ final class PillBar: NSView {
     }
 }
 
-private enum Metric {
-    static let barHeight: CGFloat = 44
-    static let itemHeight: CGFloat = 36
-    static let padX: CGFloat = 5
-    static let padY: CGFloat = 4
-    static let itemInsetX: CGFloat = 8
-    static let iconSide: CGFloat = 14
-    static let iconGap: CGFloat = 5
-    static let spacing: CGFloat = 2
-    static let textSlack: CGFloat = 2
-}
-
 private final class PillItem: NSView {
     let tab: DashTab
     var onClick: (() -> Void)?
-
-    var isOn = false {
-        didSet { render() }
-    }
+    var isOn = false { didSet { render() } }
 
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private var armed = false
 
-    override var intrinsicContentSize: NSSize {
-        let font = titleLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .medium)
-        let text = (tab.title as NSString).size(withAttributes: [.font: font]).width
-        let width = Metric.itemInsetX + Metric.iconSide + Metric.iconGap + ceil(text) + Metric.textSlack + Metric.itemInsetX
-        return NSSize(width: width, height: Metric.itemHeight)
-    }
-
     init(tab: DashTab) {
         self.tab = tab
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.masksToBounds = false
-        setContentHuggingPriority(.required, for: .horizontal)
-        setContentHuggingPriority(.required, for: .vertical)
-        setContentCompressionResistancePriority(.required, for: .horizontal)
-        setContentCompressionResistancePriority(.required, for: .vertical)
-
         titleLabel.stringValue = tab.title
-        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.font = PillBar.titleFont
         titleLabel.drawsBackground = false
         titleLabel.isBezeled = false
         titleLabel.isEditable = false
         titleLabel.isSelectable = false
-        titleLabel.backgroundColor = .clear
-        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.lineBreakMode = .byClipping
         titleLabel.maximumNumberOfLines = 1
-
+        if let cell = titleLabel.cell as? NSTextFieldCell {
+            cell.lineBreakMode = .byClipping
+            cell.usesSingleLineMode = true
+            cell.wraps = false
+        }
         iconView.imageScaling = .scaleProportionallyDown
-        iconView.imageAlignment = .alignCenter
-
         addSubview(iconView)
         addSubview(titleLabel)
         render()
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
+    required init?(coder: NSCoder) { nil }
 
-    override func layout() {
-        super.layout()
-        layer?.cornerRadius = bounds.height / 2
-        let iconY = (bounds.height - Metric.iconSide) / 2
-        iconView.frame = NSRect(x: Metric.itemInsetX, y: iconY, width: Metric.iconSide, height: Metric.iconSide)
-        let font = titleLabel.font ?? NSFont.systemFont(ofSize: 13, weight: .medium)
-        let textSize = (tab.title as NSString).size(withAttributes: [.font: font])
-        let labelX = iconView.frame.maxX + Metric.iconGap
-        let labelWidth = max(0, bounds.width - labelX - Metric.itemInsetX)
-        let labelHeight = min(bounds.height, ceil(textSize.height) + 4)
+    func placeTitle(textWidth: CGFloat) {
+        let iconX = PillLayout.itemInsetX
+        let iconY = (bounds.height - PillLayout.iconSide) / 2
+        iconView.frame = NSRect(x: iconX, y: iconY, width: PillLayout.iconSide, height: PillLayout.iconSide)
+        let labelX = iconView.frame.maxX + PillLayout.iconGap
+        let labelHeight = ceil(PillBar.titleFont.ascender - PillBar.titleFont.descender) + 2
         titleLabel.frame = NSRect(
             x: labelX,
             y: (bounds.height - labelHeight) / 2,
-            width: labelWidth,
+            width: max(textWidth, bounds.width - labelX - PillLayout.itemInsetX),
             height: labelHeight
         )
+        layer?.cornerRadius = bounds.height / 2
     }
+
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -192,8 +150,7 @@ private final class PillItem: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
-        if armed, inside {
+        if armed, bounds.contains(convert(event.locationInWindow, from: nil)) {
             onClick?()
         }
         armed = false
@@ -203,7 +160,7 @@ private final class PillItem: NSView {
         let color = isOn ? DashTheme.accent(tab) : DashTheme.secondaryText
         titleLabel.textColor = color
         iconView.image = DashTheme.symbol(tab.symbolName, pointSize: 12, tint: color)
+        iconView.contentTintColor = color
         layer?.backgroundColor = isOn ? DashTheme.accentWash(tab).cgColor : NSColor.clear.cgColor
-        needsLayout = true
     }
 }
