@@ -12,7 +12,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/macOS-13%2B-black.svg" alt="macOS 13 or later">
-  <a href="https://github.com/theprincesajjad/MacMom/releases"><img src="https://img.shields.io/badge/download-1.0-green.svg" alt="Download"></a>
+  <a href="https://github.com/theprincesajjad/MacMom/releases"><img src="https://img.shields.io/badge/download-1.1-green.svg" alt="Download"></a>
 </p>
 
 <p align="center">
@@ -37,7 +37,9 @@ Right-click an app, or use the × on its row in the menu-bar panel, to quit it o
 
 ## Install
 
-Download [MacMom 1.0](https://github.com/theprincesajjad/MacMom/releases/tag/v1.0.0) for Apple silicon, unzip it, and move the app to Applications.
+Download [MacMom 1.1](https://github.com/theprincesajjad/MacMom/releases/tag/v1.1.0) (`MacMom-1.1.0.dmg`) for Apple silicon. Open the disk image and drag MacMom to Applications.
+
+The gear in the menu-bar panel opens Settings. There you can choose Light or Dark, and turn alert notifications on or off.
 
 The build is ad-hoc signed, not notarized. The first time you open it, right-click the app and choose Open.
 
@@ -50,7 +52,7 @@ git clone https://github.com/theprincesajjad/MacMom.git
 cd MacMom
 swift test
 Scripts/package-app.sh
-open .build/Appfold.app
+open .build/MacMom.app
 ```
 
 The package script builds a release app and ad-hoc signs it. The Swift target is still named `Appfold`. The app you see is MacMom.

@@ -1,13 +1,13 @@
 #!/bin/bash
-# Build a release Appfold.app next to the package (or at the path in $1).
+# Build a release MacMom.app next to the package (or at the path in $1).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)/Appfold"
-APP_DIR="${1:-$PWD/.build/Appfold.app}"
+APP_DIR="${1:-$PWD/.build/MacMom.app}"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
-cp "$BIN" "$APP_DIR/Contents/MacOS/Appfold"
+cp "$BIN" "$APP_DIR/Contents/MacOS/MacMom"
 cp Info.plist "$APP_DIR/Contents/Info.plist"
 mkdir -p "$APP_DIR/Contents/Resources"
 if [[ -f Assets/AppIcon.icns ]]; then

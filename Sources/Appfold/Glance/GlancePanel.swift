@@ -5,8 +5,8 @@ final class GlancePanel: NSView {
     static let preferredSize = NSSize(width: 420, height: 740)
 
     var onOpen: (() -> Void)?
-    var onSettings: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onAppearanceChange: (() -> Void)?
 
     private let overviewPage = GlanceOverviewPage(frame: .zero)
     private let metricPage = GlanceMetricPage(tab: .cpu)
@@ -16,6 +16,8 @@ final class GlancePanel: NSView {
     private let scrollView = NSScrollView(frame: .zero)
     private let openButton = GlanceButton(title: "Open MacMom", symbol: "macwindow")
     private let settingsButton = GlanceButton(title: "", symbol: "gearshape", circular: true)
+    private let settingsPage = GlanceSettingsPage(frame: .zero)
+    private var showingSettings = false
     private let quitButton = GlanceButton(title: "Quit", symbol: "power")
     private var documentWidth: NSLayoutConstraint?
 
@@ -38,13 +40,20 @@ final class GlancePanel: NSView {
             self?.onOpen?()
         }
         rail.onSelect = { [weak self] tab in
+            self?.showingSettings = false
             self?.selectedTab = tab
         }
         openButton.onClick = { [weak self] in
+            self?.showingSettings = false
             self?.onOpen?()
         }
         settingsButton.onClick = { [weak self] in
-            self?.onSettings?()
+            guard let self else { return }
+            self.showingSettings.toggle()
+            self.showSelectedTab()
+        }
+        settingsPage.onAppearanceChange = { [weak self] in
+            self?.onAppearanceChange?()
         }
         quitButton.onClick = { [weak self] in
             self?.onQuit?()
@@ -148,6 +157,11 @@ final class GlancePanel: NSView {
     private func showSelectedTab() {
         if rail.selectedTab != selectedTab {
             rail.selectedTab = selectedTab
+        }
+        if showingSettings {
+            settingsPage.sync()
+            install(settingsPage)
+            return
         }
         switch selectedTab {
         case .overview:

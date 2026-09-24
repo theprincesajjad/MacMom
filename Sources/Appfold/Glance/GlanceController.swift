@@ -18,7 +18,6 @@ final class GlanceController: NSObject, NSWindowDelegate {
     private var suppressOpen = false
 
     var onOpen: (() -> Void)?
-    var onSettings: (() -> Void)?
     var onQuit: (() -> Void)?
 
     var isVisible: Bool { panel.isVisible }
@@ -35,8 +34,9 @@ final class GlanceController: NSObject, NSWindowDelegate {
         )
         super.init()
         glance.onOpen = { [weak self] in self?.onOpen?() }
-        glance.onSettings = { [weak self] in self?.onSettings?() }
         glance.onQuit = { [weak self] in self?.onQuit?() }
+        glance.onAppearanceChange = { [weak self] in self?.applyPreferredAppearance() }
+        applyPreferredAppearance()
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -85,6 +85,13 @@ final class GlanceController: NSObject, NSWindowDelegate {
         panel.orderFrontRegardless()
         panel.makeKey()
         installMonitors()
+    }
+
+    func applyPreferredAppearance() {
+        let appearance = MacMomPreferences.appearance
+        panel.appearance = appearance
+        glance.appearance = appearance
+        glance.needsDisplay = true
     }
 
     func render(_ state: DashState) {

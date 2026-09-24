@@ -42,9 +42,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         controller.onOpen = { [weak self] in
             self?.openMainWindow(nil)
         }
-        controller.onSettings = { [weak self] in
-            self?.showGlanceExportMenu()
-        }
         controller.onQuit = {
             NSApp.terminate(nil)
         }
@@ -268,6 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !retired.isEmpty {
             center.removeDeliveredNotifications(withIdentifiers: Array(retired))
         }
+        guard MacMomPreferences.notificationsEnabled else { return }
         guard !fresh.isEmpty else { return }
         center.getNotificationSettings { settings in
             let allowed: Set<UNAuthorizationStatus> = [.authorized, .provisional]
