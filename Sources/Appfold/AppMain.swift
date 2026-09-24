@@ -203,12 +203,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let main = NSMenu()
         let appItem = NSMenuItem()
         main.addItem(appItem)
-        let appMenu = NSMenu(title: "Open Activity")
-        let open = NSMenuItem(title: "Open Activity", action: #selector(openMainWindow(_:)), keyEquivalent: "o")
+        let appMenu = NSMenu(title: "MacMom")
+        let open = NSMenuItem(title: "Open MacMom", action: #selector(openMainWindow(_:)), keyEquivalent: "o")
         open.target = self
         appMenu.addItem(open)
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "Quit Open Activity", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: "Quit MacMom", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
         NSApp.mainMenu = main
     }
@@ -240,7 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.image = image
             button.imagePosition = .imageLeading
             button.title = " —"
-            button.toolTip = "Open Activity"
+            button.toolTip = "MacMom"
             button.target = self
             button.action = #selector(togglePopover(_:))
             button.sendAction(on: [.leftMouseUp])
@@ -255,7 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let figure = String(format: " %.0f%%", snapshot.systemCPUPercent)
         statusItem?.button?.title = alerts.isEmpty ? figure : "!" + figure
-        statusItem?.button?.toolTip = alerts.isEmpty ? "Open Activity" : alerts.map(\.message).joined(separator: "\n")
+        statusItem?.button?.toolTip = alerts.isEmpty ? "MacMom" : alerts.map(\.message).joined(separator: "\n")
     }
 
     /// Posts a notification the first time an alert appears, and drops it when the alert clears.
@@ -665,7 +665,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Open Activity"
+        window.title = "MacMom"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
@@ -1031,12 +1031,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var openRow: NSView?
         if kind == .menu {
             openRow = buttonRow([
-                ("Open Activity", #selector(openMainWindow(_:))),
-                ("Quit Open Activity", #selector(NSApplication.terminate(_:)))
+                ("Open MacMom", #selector(openMainWindow(_:))),
+                ("Quit MacMom", #selector(NSApplication.terminate(_:)))
             ])
         } else {
             openRow = buttonRow([
-                ("Quit Open Activity", #selector(NSApplication.terminate(_:)))
+                ("Quit MacMom", #selector(NSApplication.terminate(_:)))
             ])
         }
 

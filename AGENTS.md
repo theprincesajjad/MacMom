@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Appfold is a native macOS menu-bar app. Build with `swift test` and `Scripts/package-app.sh`. Do not add a web view, an account, or a license check.
+MacMom is a native macOS menu-bar app. The source target is still named Appfold. Build with `swift test` and `Scripts/package-app.sh`. Do not add a web view, an account, or a license check.
 
 After finishing real work in this project, log a Grove Desk update in that same turn:
 

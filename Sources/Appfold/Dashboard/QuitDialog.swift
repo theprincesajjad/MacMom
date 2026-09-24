@@ -17,7 +17,7 @@ enum QuitConfirmation {
     static func failed(name: String) {
         let dialog = QuitDialog(
             title: "Couldn't quit \(name)",
-            message: "macOS did not let Open Activity close it.",
+            message: "macOS did not let MacMom close it.",
             confirmTitle: "OK",
             icon: nil,
             destructive: false,
