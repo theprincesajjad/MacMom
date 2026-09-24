@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var snapshot: SystemSnapshot?
     private var alerts: [UsageAlert] = []
     private var announcedAlertIDs: Set<String> = []
+    private var announcedAlertAt: [String: Date] = [:]
     private var selectedAppID: String?
     private var selectedProcessPID: Int32?
     private var selectedHistoryRange: HistoryRange = .last12Hours
@@ -257,16 +258,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Posts a notification the first time an alert appears, and drops it when the alert clears.
     private func publishAlerts() {
+        let now = Date()
         let current = AlertFeed.ids(alerts)
-        let fresh = AlertFeed.fresh(previous: announcedAlertIDs, alerts: alerts)
-        let retired = announcedAlertIDs.subtracting(current)
         announcedAlertIDs = current
-        let center = UNUserNotificationCenter.current()
-        if !retired.isEmpty {
-            center.removeDeliveredNotifications(withIdentifiers: Array(retired))
-        }
         guard MacMomPreferences.notificationsEnabled else { return }
+        let fresh = AlertFeed.fresh(previous: [], alerts: alerts).filter { note in
+            AlertFeed.shouldAnnounce(last: announcedAlertAt[note.id], now: now, cooldown: AlertPolicy.notificationCooldown)
+        }
         guard !fresh.isEmpty else { return }
+        for note in fresh {
+            announcedAlertAt[note.id] = now
+        }
+        let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             let allowed: Set<UNAuthorizationStatus> = [.authorized, .provisional]
             guard allowed.contains(settings.authorizationStatus) else { return }
@@ -275,7 +278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 content.title = note.title
                 content.body = note.body
                 content.sound = .default
-                center.add(UNNotificationRequest(identifier: note.id, content: content, trigger: nil))
+                center.add(UNNotificationRequest(identifier: "\(note.id)-\(Int(now.timeIntervalSince1970))", content: content, trigger: nil))
             }
         }
     }

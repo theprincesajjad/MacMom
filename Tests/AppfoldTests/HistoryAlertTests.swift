@@ -124,13 +124,39 @@ final class HistoryAlertTests: XCTestCase {
         let alerts = AlertRules.evaluate(series: hotSeries(policy: policy, start: start), policy: policy)
         let first = AlertFeed.fresh(previous: [], alerts: alerts)
         XCTAssertFalse(first.isEmpty)
-        XCTAssertTrue(first.contains { $0.title == "Hot" && $0.body == "Hot is using high CPU" })
+        XCTAssertTrue(first.contains { $0.title == "MacMom" && $0.body == "Hot is using high CPU" })
         let again = AlertFeed.fresh(previous: AlertFeed.ids(alerts), alerts: alerts)
         XCTAssertEqual(again, [])
         let cpuOnly = alerts.filter { if case .sustainedHighCPU = $0 { return true }; return false }
         let rest = AlertFeed.fresh(previous: AlertFeed.ids(cpuOnly), alerts: alerts)
         XCTAssertFalse(rest.contains { $0.id.hasPrefix("cpu:") })
         XCTAssertTrue(rest.contains { $0.id.hasPrefix("memory:") })
+    }
+
+    func testSmallMemoryClimbDoesNotAlert() {
+        let policy = AlertPolicy.standard
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        var samples: [UsageSample] = []
+        for index in 0..<8 {
+            samples.append(UsageSample(
+                at: start.addingTimeInterval(Double(index) * 2),
+                appID: "browser",
+                appName: "Browser",
+                cpu: 4,
+                memory: 800_000_000 + UInt64(index) * 20 * 1024 * 1024,
+                disk: 8 * 1024 * 1024,
+                network: 0,
+                energy: 0
+            ))
+        }
+        XCTAssertEqual(AlertRules.evaluate(series: samples, policy: policy), [])
+    }
+
+    func testNotificationCooldownBlocksARepeat() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertFalse(AlertFeed.shouldAnnounce(last: now.addingTimeInterval(-10), now: now, cooldown: AlertPolicy.notificationCooldown))
+        XCTAssertTrue(AlertFeed.shouldAnnounce(last: now.addingTimeInterval(-31 * 60), now: now, cooldown: AlertPolicy.notificationCooldown))
+        XCTAssertTrue(AlertFeed.shouldAnnounce(last: nil, now: now, cooldown: AlertPolicy.notificationCooldown))
     }
 
     private func hotSeries(policy: AlertPolicy, start: Date) -> [UsageSample] {

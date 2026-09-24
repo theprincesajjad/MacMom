@@ -5,6 +5,8 @@ public struct AlertPolicy: Equatable {
     public var sustainedHighCPUCount: Int
     public var memoryClimbBytes: UInt64
     public var sustainedMemoryCount: Int
+    /// An app already this large can alert when it is still growing.
+    public var heavyMemoryBytes: UInt64
     public var heavyDiskBytes: UInt64
     public var heavyNetworkBytes: UInt64
 
@@ -13,6 +15,7 @@ public struct AlertPolicy: Equatable {
         sustainedHighCPUCount: Int,
         memoryClimbBytes: UInt64,
         sustainedMemoryCount: Int,
+        heavyMemoryBytes: UInt64,
         heavyDiskBytes: UInt64,
         heavyNetworkBytes: UInt64
     ) {
@@ -20,30 +23,35 @@ public struct AlertPolicy: Equatable {
         self.sustainedHighCPUCount = sustainedHighCPUCount
         self.memoryClimbBytes = memoryClimbBytes
         self.sustainedMemoryCount = sustainedMemoryCount
+        self.heavyMemoryBytes = heavyMemoryBytes
         self.heavyDiskBytes = heavyDiskBytes
         self.heavyNetworkBytes = heavyNetworkBytes
     }
 
     public static let standard = AlertPolicy(
         highCPUPercent: 80,
-        sustainedHighCPUCount: 3,
-        memoryClimbBytes: 256 * 1024 * 1024,
-        sustainedMemoryCount: 3,
-        heavyDiskBytes: 64 * 1024 * 1024,
-        heavyNetworkBytes: 64 * 1024 * 1024
+        sustainedHighCPUCount: 6,
+        memoryClimbBytes: 1536 * 1024 * 1024,
+        sustainedMemoryCount: 6,
+        heavyMemoryBytes: 6 * 1024 * 1024 * 1024,
+        heavyDiskBytes: 1024 * 1024 * 1024,
+        heavyNetworkBytes: 1024 * 1024 * 1024
     )
+
+    /// Same app and reason stays quiet this long, even if the reading dips and climbs again.
+    public static let notificationCooldown: TimeInterval = 30 * 60
 }
 
 public enum UsageAlert: Equatable {
     case sustainedHighCPU(appID: String, appName: String)
-    case sustainedMemoryClimb(appID: String, appName: String)
+    case sustainedMemoryClimb(appID: String, appName: String, usedBytes: UInt64, climbedBytes: UInt64)
     case heavyDisk(appID: String, appName: String)
     case heavyNetwork(appID: String, appName: String)
 
     public var appID: String {
         switch self {
         case .sustainedHighCPU(let appID, _),
-             .sustainedMemoryClimb(let appID, _),
+             .sustainedMemoryClimb(let appID, _, _, _),
              .heavyDisk(let appID, _),
              .heavyNetwork(let appID, _):
             return appID
@@ -53,7 +61,7 @@ public enum UsageAlert: Equatable {
     public var appName: String {
         switch self {
         case .sustainedHighCPU(_, let appName),
-             .sustainedMemoryClimb(_, let appName),
+             .sustainedMemoryClimb(_, let appName, _, _),
              .heavyDisk(_, let appName),
              .heavyNetwork(_, let appName):
             return appName
@@ -64,8 +72,11 @@ public enum UsageAlert: Equatable {
         switch self {
         case .sustainedHighCPU(_, let appName):
             return "\(appName) is using high CPU"
-        case .sustainedMemoryClimb(_, let appName):
-            return "\(appName) memory is climbing"
+        case .sustainedMemoryClimb(_, let appName, let usedBytes, let climbedBytes):
+            if climbedBytes > 0 {
+                return "\(appName) climbed \(Self.memoryText(climbedBytes)) and is using \(Self.memoryText(usedBytes))"
+            }
+            return "\(appName) is using \(Self.memoryText(usedBytes))"
         case .heavyDisk(_, let appName):
             return "\(appName) is using the disk heavily"
         case .heavyNetwork(_, let appName):
@@ -73,12 +84,21 @@ public enum UsageAlert: Equatable {
         }
     }
 
+    static func memoryText(_ bytes: UInt64) -> String {
+        let gb = Double(bytes) / 1_073_741_824
+        if gb >= 1 {
+            return String(format: "%.1f GB", locale: Locale(identifier: "en_US_POSIX"), gb)
+        }
+        let mb = Double(bytes) / (1024 * 1024)
+        return String(format: "%.0f MB", locale: Locale(identifier: "en_US_POSIX"), mb)
+    }
+
     /// Stable id for one app and one kind of alert. Used to post a notification once.
     public var noteID: String {
         switch self {
         case .sustainedHighCPU(let appID, _):
             return "cpu:\(appID)"
-        case .sustainedMemoryClimb(let appID, _):
+        case .sustainedMemoryClimb(let appID, _, _, _):
             return "memory:\(appID)"
         case .heavyDisk(let appID, _):
             return "disk:\(appID)"
@@ -109,8 +129,14 @@ public enum AlertFeed {
     public static func fresh(previous: Set<String>, alerts: [UsageAlert]) -> [AlertNote] {
         alerts.compactMap { alert in
             guard !previous.contains(alert.noteID) else { return nil }
-            return AlertNote(id: alert.noteID, title: alert.appName, body: alert.message)
+            return AlertNote(id: alert.noteID, title: "MacMom", body: alert.message)
         }
+    }
+
+    /// False when this app and reason was announced recently. Stops a dip-and-climb from notifying again.
+    public static func shouldAnnounce(last: Date?, now: Date, cooldown: TimeInterval) -> Bool {
+        guard let last else { return true }
+        return now.timeIntervalSince(last) >= cooldown
     }
 }
 
@@ -129,8 +155,13 @@ public enum AlertRules {
             if sustainedHighCPU(ordered, policy: policy) {
                 alerts.append(.sustainedHighCPU(appID: appID, appName: name))
             }
-            if sustainedMemoryClimb(ordered, policy: policy) {
-                alerts.append(.sustainedMemoryClimb(appID: appID, appName: name))
+            if let memory = sustainedMemoryClimb(ordered, policy: policy) {
+                alerts.append(.sustainedMemoryClimb(
+                    appID: appID,
+                    appName: name,
+                    usedBytes: memory.used,
+                    climbedBytes: memory.climbed
+                ))
             }
             if ordered.contains(where: { $0.disk >= policy.heavyDiskBytes }) {
                 alerts.append(.heavyDisk(appID: appID, appName: name))
@@ -156,23 +187,21 @@ public enum AlertRules {
         return false
     }
 
-    private static func sustainedMemoryClimb(_ samples: [UsageSample], policy: AlertPolicy) -> Bool {
+    /// A large climb, or an already huge app that is still growing. A few megabytes of jitter does not qualify.
+    private static func sustainedMemoryClimb(_ samples: [UsageSample], policy: AlertPolicy) -> (used: UInt64, climbed: UInt64)? {
         let need = max(policy.sustainedMemoryCount, 2)
-        guard samples.count >= need else { return false }
-        for start in 0...(samples.count - need) {
-            let end = start + need
-            var strictlyRising = true
-            for index in (start + 1)..<end where samples[index].memory <= samples[index - 1].memory {
-                strictlyRising = false
-                break
-            }
-            if !strictlyRising { continue }
-            let climb = samples[end - 1].memory - samples[start].memory
-            if climb >= policy.memoryClimbBytes {
-                return true
-            }
+        guard samples.count >= need else { return nil }
+        let window = samples.suffix(need)
+        guard let first = window.first, let last = window.last, last.memory >= first.memory else { return nil }
+        let climbed = last.memory - first.memory
+        let used = last.memory
+        if climbed >= policy.memoryClimbBytes {
+            return (used, climbed)
         }
-        return false
+        if used >= policy.heavyMemoryBytes, climbed >= policy.memoryClimbBytes / 2 {
+            return (used, climbed)
+        }
+        return nil
     }
 }
 

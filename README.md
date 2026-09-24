@@ -12,7 +12,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/macOS-13%2B-black.svg" alt="macOS 13 or later">
-  <a href="https://github.com/theprincesajjad/MacMom/releases"><img src="https://img.shields.io/badge/download-1.1-green.svg" alt="Download"></a>
+  <a href="https://github.com/theprincesajjad/MacMom/releases"><img src="https://img.shields.io/badge/download-1.1.1-green.svg" alt="Download"></a>
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@ Right-click an app, or use the × on its row in the menu-bar panel, to quit it o
 
 ## Install
 
-Download [MacMom 1.1](https://github.com/theprincesajjad/MacMom/releases/tag/v1.1.0) (`MacMom-1.1.0.dmg`) for Apple silicon. Open the disk image and drag MacMom to Applications.
+Download [MacMom 1.1.1](https://github.com/theprincesajjad/MacMom/releases/tag/v1.1.1) (`MacMom-1.1.1.dmg`) for Apple silicon. Open the disk image and drag MacMom to Applications.
 
 The gear in the menu-bar panel opens Settings. There you can choose Light or Dark, and turn alert notifications on or off.
 
@@ -65,7 +65,7 @@ Everything stays on this Mac. There is no account, license key, or network servi
 
 History is kept for 30 days in `~/Library/Application Support/Appfold/history.jsonl`. Samples older than 30 days are deleted. With the windows closed, MacMom samples every 5 seconds. With a window open, it samples about every 2 seconds.
 
-A sustained high CPU, a climbing memory use, or a heavy disk or network burst shows a local alert. A one-off spike does not.
+A notification fires only for a large memory climb (about 1.5 GB), an app already using about 6 GB that is still growing, sustained high CPU, or a very heavy disk or network burst. The same notice stays quiet for 30 minutes. A small climb does not notify.
 
 ## Measurements
 
