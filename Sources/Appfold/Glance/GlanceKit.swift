@@ -510,6 +510,7 @@ final class GlanceAppRow: NSView {
     private let nameField = glanceLabel("", size: 14, weight: .medium, color: GlanceTheme.primary)
     private let valueField = glanceLabel("—", size: 13, weight: .medium, color: GlanceTheme.primary)
     private let meter = GlanceMeter()
+    private let quitControl = NSButton()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -524,10 +525,20 @@ final class GlanceAppRow: NSView {
         valueField.alignment = .right
         valueField.setContentCompressionResistancePriority(.required, for: .horizontal)
         valueField.setContentHuggingPriority(.required, for: .horizontal)
+        quitControl.isBordered = false
+        quitControl.bezelStyle = .inline
+        quitControl.imagePosition = .imageOnly
+        quitControl.image = GlanceTheme.symbol("xmark.circle", pointSize: 13, tint: GlanceTheme.secondary)
+        quitControl.contentTintColor = GlanceTheme.secondary
+        quitControl.toolTip = "Quit"
+        quitControl.target = self
+        quitControl.action = #selector(quitPressed)
+        quitControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
         addSubview(nameField)
         addSubview(meter)
         addSubview(valueField)
+        addSubview(quitControl)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 28),
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -538,19 +549,27 @@ final class GlanceAppRow: NSView {
             nameField.centerYAnchor.constraint(equalTo: centerYAnchor),
             meter.leadingAnchor.constraint(greaterThanOrEqualTo: nameField.trailingAnchor, constant: 8),
             meter.centerYAnchor.constraint(equalTo: centerYAnchor),
-            meter.widthAnchor.constraint(equalToConstant: 92),
+            meter.widthAnchor.constraint(equalToConstant: 72),
             meter.heightAnchor.constraint(equalToConstant: 6),
-            valueField.leadingAnchor.constraint(equalTo: meter.trailingAnchor, constant: 10),
-            valueField.trailingAnchor.constraint(equalTo: trailingAnchor),
+            valueField.leadingAnchor.constraint(equalTo: meter.trailingAnchor, constant: 8),
             valueField.centerYAnchor.constraint(equalTo: centerYAnchor),
-            valueField.widthAnchor.constraint(greaterThanOrEqualToConstant: 64)
+            valueField.widthAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            quitControl.leadingAnchor.constraint(equalTo: valueField.trailingAnchor, constant: 4),
+            quitControl.trailingAnchor.constraint(equalTo: trailingAnchor),
+            quitControl.centerYAnchor.constraint(equalTo: centerYAnchor),
+            quitControl.widthAnchor.constraint(equalToConstant: 22),
+            quitControl.heightAnchor.constraint(equalToConstant: 22),
         ])
     }
 
     required init?(coder: NSCoder) { nil }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(convert(point, from: superview)) ? self : nil
+        let local = convert(point, from: superview)
+        guard bounds.contains(local) else { return nil }
+        let inQuit = quitControl.convert(local, from: self)
+        if quitControl.bounds.contains(inQuit) { return quitControl }
+        return self
     }
 
     var appID = ""
@@ -561,6 +580,7 @@ final class GlanceAppRow: NSView {
         valueField.stringValue = value
         meter.fraction = fraction
         meter.fillColor = tint
+        quitControl.toolTip = "Quit \(name)"
         if let icon {
             iconView.image = icon
             iconView.isHidden = false
@@ -576,13 +596,49 @@ final class GlanceAppRow: NSView {
             super.rightMouseDown(with: event)
             return
         }
+        showQuitMenu(from: self, event: event)
+    }
+
+    @objc private func quitPressed() {
+        showQuitMenu(from: quitControl, event: nil)
+    }
+
+    private func showQuitMenu(from view: NSView, event: NSEvent?) {
+        guard !appID.isEmpty else { return }
         let name = nameField.stringValue.isEmpty ? "App" : nameField.stringValue
         let id = appID
-        RowContextMenu.popUp(event, in: self, items: [
+        window?.makeKey()
+        let items: [(String, String, () -> Void)] = [
             ("Quit \(name)", "power", { GlanceActions.quitApp?(id, false) }),
             ("Force Quit \(name)", "xmark.circle", { GlanceActions.quitApp?(id, true) }),
-        ])
+        ]
+        if let event {
+            RowContextMenu.popUp(event, in: view, items: items)
+        } else {
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            for item in items {
+                let command = GlanceMenuCommand(item.2)
+                let entry = NSMenuItem(title: item.0, action: #selector(GlanceMenuCommand.run(_:)), keyEquivalent: "")
+                entry.target = command
+                entry.representedObject = command
+                entry.isEnabled = true
+                if let image = NSImage(systemSymbolName: item.1, accessibilityDescription: nil) {
+                    image.isTemplate = true
+                    image.size = NSSize(width: 14, height: 14)
+                    entry.image = image
+                }
+                menu.addItem(entry)
+            }
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height), in: view)
+        }
     }
+}
+
+private final class GlanceMenuCommand: NSObject {
+    let handler: () -> Void
+    init(_ handler: @escaping () -> Void) { self.handler = handler }
+    @objc func run(_ sender: Any?) { handler() }
 }
 
 enum GlanceActions {

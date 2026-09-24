@@ -14,7 +14,7 @@ final class GlancePanel: NSView {
     private let rail = GlanceIconRail(frame: .zero)
     private let alertStrip = GlanceAlertStrip()
     private let scrollView = NSScrollView(frame: .zero)
-    private let openButton = GlanceButton(title: "Open Appfold", symbol: "macwindow")
+    private let openButton = GlanceButton(title: "Open Activity", symbol: "macwindow")
     private let settingsButton = GlanceButton(title: "", symbol: "gearshape", circular: true)
     private let quitButton = GlanceButton(title: "Quit", symbol: "power")
     private var documentWidth: NSLayoutConstraint?

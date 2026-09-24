@@ -13,7 +13,8 @@ final class GlanceController: NSObject, NSWindowDelegate {
     private let panel: GlanceWindow
     private var outsideMonitor: Any?
     private var localMonitor: Any?
-    /// Set when this click already dismissed the panel, so the status item does not reopen it.
+    private weak var statusButton: NSStatusBarButton?
+    /// The status-item click that closed the panel also sends the button action. Ignore that reopen.
     private var suppressOpen = false
 
     var onOpen: (() -> Void)?
@@ -51,11 +52,16 @@ final class GlanceController: NSObject, NSWindowDelegate {
     }
 
     func toggle(from button: NSStatusBarButton?) {
-        if panel.isVisible {
-            dismiss()
+        statusButton = button
+        if suppressOpen {
+            suppressOpen = false
+            if panel.isVisible { close() }
             return
         }
-        if suppressOpen { return }
+        if panel.isVisible {
+            close()
+            return
+        }
         show(from: button)
     }
 
@@ -90,32 +96,58 @@ final class GlanceController: NSObject, NSWindowDelegate {
         panel.orderOut(nil)
     }
 
-    private func dismiss() {
-        suppressOpen = true
-        close()
-        DispatchQueue.main.async { [weak self] in
-            self?.suppressOpen = false
-        }
-    }
-
     private func installMonitors() {
         removeMonitors()
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
-            guard let self, self.panel.isVisible else { return event }
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .keyDown]) { [weak self] event in
+            guard let self else { return event }
+            if event.type == .leftMouseUp {
+                if self.suppressOpen {
+                    DispatchQueue.main.async { [weak self] in self?.suppressOpen = false }
+                }
+                return event
+            }
+            guard self.panel.isVisible else { return event }
             if event.type == .keyDown, event.keyCode == 53 {
-                self.dismiss()
+                self.close()
                 return nil
             }
-            if event.type == .leftMouseDown || event.type == .rightMouseDown {
-                if event.window !== self.panel {
-                    self.dismiss()
-                }
+            if event.type == .leftMouseDown, self.clickIsOnStatusButton() {
+                self.suppressOpen = true
+                self.close()
+                return nil
+            }
+            if event.type == .leftMouseDown, !self.eventStaysOpen(event) {
+                self.close()
             }
             return event
         }
-        outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            self?.dismiss()
+        outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
+            guard let self, self.panel.isVisible else { return }
+            if self.clickIsOnStatusButton() {
+                self.suppressOpen = true
+                self.close()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                    self?.suppressOpen = false
+                }
+                return
+            }
+            if self.panel.frame.contains(NSEvent.mouseLocation) { return }
+            self.close()
         }
+    }
+
+    private func clickIsOnStatusButton() -> Bool {
+        guard let button = statusButton, let window = button.window else { return false }
+        let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
+        return rect.insetBy(dx: -6, dy: -6).contains(NSEvent.mouseLocation)
+    }
+
+    /// Clicks on the glance, or on the quit menu that hangs off it, must not close the panel first.
+    private func eventStaysOpen(_ event: NSEvent) -> Bool {
+        if event.window === panel { return true }
+        if panel.frame.contains(NSEvent.mouseLocation) { return true }
+        let name = event.window.map { String(describing: type(of: $0)) } ?? ""
+        return name.contains("Menu")
     }
 
     private func removeMonitors() {
