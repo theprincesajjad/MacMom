@@ -1,0 +1,5 @@
+.build/
+Appfold.app/
+.DS_Store
+*.xcuserstate
+xcuserdata/

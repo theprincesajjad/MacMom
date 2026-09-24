@@ -1,0 +1,5 @@
+module CLibProc {
+    header "appfold_proc.h"
+    link "proc"
+    export *
+}
