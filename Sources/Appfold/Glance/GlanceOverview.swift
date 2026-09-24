@@ -52,7 +52,7 @@ final class GlanceOverviewPage: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.backgroundColor = GlanceTheme.canvas.cgColor
+        layer?.backgroundColor = GlanceTheme.paint(GlanceTheme.canvas, effectiveAppearance)
     }
 
     func render(_ state: DashState) {
@@ -119,6 +119,7 @@ final class GlanceOverviewPage: NSView {
             let cpu = app.cpuPercent
             row.isHidden = false
             row.apply(
+                id: app.id,
                 icon: app.icon,
                 name: app.name,
                 value: GlanceFormat.percentApp(cpu),
@@ -130,8 +131,6 @@ final class GlanceOverviewPage: NSView {
 
     private func build() {
         wantsLayer = true
-        appearance = NSAppearance(named: .darkAqua)
-        layer?.backgroundColor = GlanceTheme.canvas.cgColor
 
         cpuUnit.isHidden = true
         gpuUnit.isHidden = true
@@ -161,6 +160,7 @@ final class GlanceOverviewPage: NSView {
         let eyebrow = glanceEyebrow("Overview")
         let clock = NSImageView()
         clock.image = GlanceTheme.symbol("clock", pointSize: 12, tint: GlanceTheme.secondary)
+        clock.contentTintColor = GlanceTheme.secondary
         clock.imageScaling = .scaleProportionallyDown
         clock.imageAlignment = .alignCenter
         clock.translatesAutoresizingMaskIntoConstraints = false
@@ -300,6 +300,7 @@ final class GlanceOverviewPage: NSView {
         icon.imageScaling = .scaleProportionallyDown
         icon.imageAlignment = .alignCenter
         icon.image = GlanceTheme.symbol(GlanceTheme.symbolName(tab), pointSize: 13, tint: GlanceTheme.accent(tab))
+        icon.contentTintColor = GlanceTheme.accent(tab)
         icon.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             icon.widthAnchor.constraint(equalToConstant: 16),

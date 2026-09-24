@@ -161,6 +161,7 @@ private final class GlanceProjectRow: NSView {
         super.init(frame: frameRect)
 
         iconView.image = GlanceTheme.symbol("folder.fill", pointSize: 15, tint: GlanceTheme.accent(.projects))
+        iconView.contentTintColor = GlanceTheme.accent(.projects)
         iconView.imageScaling = .scaleProportionallyDown
         iconView.imageAlignment = .alignCenter
         iconView.translatesAutoresizingMaskIntoConstraints = false

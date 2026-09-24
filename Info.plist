@@ -11,9 +11,11 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Appfold</string>
+	<string>Open Activity</string>
 	<key>CFBundleDisplayName</key>
-	<string>Appfold</string>
+	<string>Open Activity</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

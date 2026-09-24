@@ -4,19 +4,81 @@ import AppfoldCore
 /// Dark glance palette and drawing pieces shared by the menu-bar panel.
 /// Pages format measured `DashState` values. They do not sample or invent readings.
 enum GlanceTheme {
-    static let canvas = NSColor(srgbRed: 0.102, green: 0.110, blue: 0.129, alpha: 1)
-    static let card = NSColor(srgbRed: 0.165, green: 0.173, blue: 0.196, alpha: 1)
-    static let control = NSColor(srgbRed: 0.196, green: 0.204, blue: 0.231, alpha: 1)
-    static let primary = NSColor(srgbRed: 0.96, green: 0.96, blue: 0.97, alpha: 1)
-    static let secondary = NSColor(srgbRed: 0.62, green: 0.64, blue: 0.68, alpha: 1)
-    static let tertiary = NSColor(srgbRed: 0.45, green: 0.47, blue: 0.51, alpha: 1)
-    static let hairline = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.08)
-    static let track = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.08)
-    static let portFill = NSColor(srgbRed: 0.18, green: 0.36, blue: 0.26, alpha: 1)
-    static let portText = NSColor(srgbRed: 0.45, green: 0.86, blue: 0.58, alpha: 1)
-    static let normalFill = NSColor(srgbRed: 0.16, green: 0.36, blue: 0.24, alpha: 1)
-    static let normalText = NSColor(srgbRed: 0.45, green: 0.86, blue: 0.55, alpha: 1)
-    static let highText = NSColor(srgbRed: 0.95, green: 0.72, blue: 0.28, alpha: 1)
+    static let canvas = adaptive(
+        light: NSColor(srgbRed: 0.965, green: 0.965, blue: 0.972, alpha: 1),
+        dark: NSColor(srgbRed: 0.102, green: 0.110, blue: 0.129, alpha: 1),
+        name: "OpenActivityCanvas"
+    )
+    static let card = adaptive(
+        light: .white,
+        dark: NSColor(srgbRed: 0.165, green: 0.173, blue: 0.196, alpha: 1),
+        name: "OpenActivityCard"
+    )
+    static let control = adaptive(
+        light: NSColor(srgbRed: 0.93, green: 0.93, blue: 0.95, alpha: 1),
+        dark: NSColor(srgbRed: 0.196, green: 0.204, blue: 0.231, alpha: 1),
+        name: "OpenActivityControl"
+    )
+    static let primary = adaptive(
+        light: NSColor(srgbRed: 0.11, green: 0.12, blue: 0.14, alpha: 1),
+        dark: NSColor(srgbRed: 0.96, green: 0.96, blue: 0.97, alpha: 1),
+        name: "OpenActivityPrimary"
+    )
+    static let secondary = adaptive(
+        light: NSColor(srgbRed: 0.38, green: 0.40, blue: 0.44, alpha: 1),
+        dark: NSColor(srgbRed: 0.62, green: 0.64, blue: 0.68, alpha: 1),
+        name: "OpenActivitySecondary"
+    )
+    static let tertiary = adaptive(
+        light: NSColor(srgbRed: 0.52, green: 0.54, blue: 0.58, alpha: 1),
+        dark: NSColor(srgbRed: 0.45, green: 0.47, blue: 0.51, alpha: 1),
+        name: "OpenActivityTertiary"
+    )
+    static let hairline = adaptive(
+        light: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.08),
+        dark: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.08),
+        name: "OpenActivityHairline"
+    )
+    static let track = adaptive(
+        light: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.08),
+        dark: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.08),
+        name: "OpenActivityTrack"
+    )
+    static let portFill = adaptive(
+        light: NSColor(srgbRed: 0.86, green: 0.95, blue: 0.89, alpha: 1),
+        dark: NSColor(srgbRed: 0.18, green: 0.36, blue: 0.26, alpha: 1),
+        name: "OpenActivityPortFill"
+    )
+    static let portText = adaptive(
+        light: NSColor(srgbRed: 0.12, green: 0.45, blue: 0.28, alpha: 1),
+        dark: NSColor(srgbRed: 0.45, green: 0.86, blue: 0.58, alpha: 1),
+        name: "OpenActivityPortText"
+    )
+    static let normalFill = adaptive(
+        light: NSColor(srgbRed: 0.86, green: 0.95, blue: 0.89, alpha: 1),
+        dark: NSColor(srgbRed: 0.16, green: 0.36, blue: 0.24, alpha: 1),
+        name: "OpenActivityNormalFill"
+    )
+    static let normalText = adaptive(
+        light: NSColor(srgbRed: 0.12, green: 0.45, blue: 0.28, alpha: 1),
+        dark: NSColor(srgbRed: 0.45, green: 0.86, blue: 0.55, alpha: 1),
+        name: "OpenActivityNormalText"
+    )
+    static let highText = NSColor(srgbRed: 0.78, green: 0.48, blue: 0.08, alpha: 1)
+
+    static func paint(_ color: NSColor, _ appearance: NSAppearance) -> CGColor {
+        var resolved = color.cgColor
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = color.cgColor
+        }
+        return resolved
+    }
+
+    private static func adaptive(light: NSColor, dark: NSColor, name: String) -> NSColor {
+        NSColor(name: NSColor.Name(name)) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua ? light : dark
+        }
+    }
 
     static let cardRadius: CGFloat = 18
     static let panelRadius: CGFloat = 26
@@ -55,7 +117,12 @@ enum GlanceTheme {
     }
 
     static func symbol(_ name: String, pointSize: CGFloat, tint: NSColor) -> NSImage {
-        DashTheme.symbol(name, pointSize: pointSize, tint: tint)
+        let configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration) ?? NSImage()
+        image.isTemplate = true
+        _ = tint
+        return image
     }
 }
 
@@ -280,19 +347,31 @@ func glanceTracked(_ text: String, size: CGFloat, weight: NSFont.Weight, color: 
 }
 
 func glanceHairline() -> NSView {
-    let line = NSView()
-    line.wantsLayer = true
-    line.layer?.backgroundColor = GlanceTheme.hairline.cgColor
+    let line = GlanceHairline()
     line.translatesAutoresizingMaskIntoConstraints = false
     line.heightAnchor.constraint(equalToConstant: 1).isActive = true
     return line
+}
+
+private final class GlanceHairline: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = GlanceTheme.paint(GlanceTheme.hairline, effectiveAppearance)
+    }
 }
 
 final class GlanceCard: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = GlanceTheme.card.cgColor
         layer?.cornerRadius = GlanceTheme.cardRadius
         layer?.masksToBounds = true
     }
@@ -301,8 +380,15 @@ final class GlanceCard: NSView {
 
     override var isFlipped: Bool { true }
 
+    override var wantsUpdateLayer: Bool { true }
+
     override func updateLayer() {
-        layer?.backgroundColor = GlanceTheme.card.cgColor
+        layer?.backgroundColor = GlanceTheme.paint(GlanceTheme.card, effectiveAppearance)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 }
 
@@ -463,7 +549,14 @@ final class GlanceAppRow: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    func apply(icon: NSImage?, name: String, value: String, fraction: CGFloat, tint: NSColor) {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(convert(point, from: superview)) ? self : nil
+    }
+
+    var appID = ""
+
+    func apply(id: String, icon: NSImage?, name: String, value: String, fraction: CGFloat, tint: NSColor) {
+        appID = id
         nameField.stringValue = name
         valueField.stringValue = value
         meter.fraction = fraction
@@ -473,9 +566,28 @@ final class GlanceAppRow: NSView {
             iconView.isHidden = false
         } else {
             iconView.image = GlanceTheme.symbol("app", pointSize: 12, tint: GlanceTheme.secondary)
+            iconView.contentTintColor = GlanceTheme.secondary
             iconView.isHidden = false
         }
     }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard !appID.isEmpty else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        let name = nameField.stringValue.isEmpty ? "App" : nameField.stringValue
+        let id = appID
+        RowContextMenu.popUp(event, in: self, items: [
+            ("Quit \(name)", "power", { GlanceActions.quitApp?(id, false) }),
+            ("Force Quit \(name)", "xmark.circle", { GlanceActions.quitApp?(id, true) }),
+        ])
+    }
+}
+
+enum GlanceActions {
+    /// Quit or force-quit an app from the menu-bar list. The app asks before it signals anything.
+    static var quitApp: ((String, Bool) -> Void)?
 }
 
 /// Rounded footer control. `circular` is the gear. Otherwise a wide label button.
@@ -490,9 +602,9 @@ final class GlanceButton: NSView {
         self.circular = circular
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = GlanceTheme.control.cgColor
         layer?.cornerRadius = circular ? 22 : 14
         iconView.image = GlanceTheme.symbol(symbol, pointSize: circular ? 16 : 14, tint: GlanceTheme.primary)
+        iconView.contentTintColor = GlanceTheme.primary
         iconView.imageScaling = .scaleProportionallyDown
         titleField.stringValue = title
         titleField.font = .systemFont(ofSize: 15, weight: .medium)
@@ -539,17 +651,30 @@ final class GlanceButton: NSView {
         }
     }
 
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        let fill = armed ? GlanceTheme.card : GlanceTheme.control
+        layer?.backgroundColor = GlanceTheme.paint(fill, effectiveAppearance)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     override func mouseDown(with event: NSEvent) {
         armed = bounds.contains(convert(event.locationInWindow, from: nil))
-        layer?.backgroundColor = GlanceTheme.card.cgColor
+        needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        layer?.backgroundColor = GlanceTheme.control.cgColor
-        if armed, bounds.contains(convert(event.locationInWindow, from: nil)) {
+        let inside = armed && bounds.contains(convert(event.locationInWindow, from: nil))
+        armed = false
+        needsDisplay = true
+        if inside {
             onClick?()
         }
-        armed = false
     }
 }
 

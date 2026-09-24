@@ -13,9 +13,17 @@ public final class SystemSampler {
     public private(set) var lastElapsed: TimeInterval = 0
     private var previousHost: HostCPUTicks?
     private var previousNetwork: UInt64?
+    private var previousEnergy: [Int32: UInt64] = [:]
+    private var latestWatts: [Int32: Double] = [:]
+    private var listBuffer: [appfold_proc] = []
     private var previousAt: Date?
 
     public init() {}
+
+    /// Watts since the previous sample for one process. Nil until a second reading exists.
+    public func watts(for pid: Int32) -> Double? {
+        latestWatts[pid]
+    }
 
     /// Snapshot the menu bar and the main window both display.
     public func takeSnapshot(now: Date = Date()) -> SystemSnapshot {
@@ -52,6 +60,10 @@ public final class SystemSampler {
             writeTotal += proc.diskWriteBytes
             previousCPU[proc.pid] = proc.cpuTimeNS
             previousDisk[proc.pid] = proc.diskBytes
+            if let watts = EnergyRate.watts(previousNanojoules: previousEnergy[proc.pid], currentNanojoules: proc.energy, elapsed: usable) {
+                latestWatts[proc.pid] = watts
+            }
+            previousEnergy[proc.pid] = proc.energy
             let name = proc.name.isEmpty ? "Process \(proc.pid)" : proc.name
             facts.append(ProcessFact(
                 pid: proc.pid,
@@ -69,6 +81,8 @@ public final class SystemSampler {
         }
         previousCPU = previousCPU.filter { seen.contains($0.key) }
         previousDisk = previousDisk.filter { seen.contains($0.key) }
+        previousEnergy = previousEnergy.filter { seen.contains($0.key) }
+        latestWatts = latestWatts.filter { seen.contains($0.key) }
 
         let diskSum = facts.reduce(UInt64(0)) { $0 + $1.diskBytes }
         let readDelta = CounterDelta.bytes(previous: previousDiskRead, current: readTotal)
@@ -119,15 +133,17 @@ public final class SystemSampler {
     private func listProcesses() -> [ListedProcess] {
         let suggested = Int(appfold_suggested_capacity())
         let capacity = min(max(suggested, 1), 4096)
-        var buffer = [appfold_proc](repeating: appfold_proc(), count: capacity)
-        let count = buffer.withUnsafeMutableBufferPointer { pointer -> Int in
+        if listBuffer.count < capacity {
+            listBuffer = [appfold_proc](repeating: appfold_proc(), count: capacity)
+        }
+        let count = listBuffer.withUnsafeMutableBufferPointer { pointer -> Int in
             Int(appfold_list_processes(pointer.baseAddress, Int32(capacity)))
         }
         guard count > 0 else { return [] }
         var rows: [ListedProcess] = []
         rows.reserveCapacity(count)
         for index in 0..<min(count, capacity) {
-            let item = buffer[index]
+            let item = listBuffer[index]
             rows.append(ListedProcess(
                 pid: item.pid,
                 parentPID: item.ppid,

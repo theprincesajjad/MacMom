@@ -125,6 +125,45 @@ final class QuitTests: XCTestCase {
         XCTAssertTrue(bystander.isRunning)
     }
 
+    func testQuitPromptNamesTheAppAndHowManyProcessesClose() {
+        let prompt = QuitCopy.application(name: "Google Chrome", processCount: 96, force: false)
+        XCTAssertEqual(prompt.title, "Quit Google Chrome?")
+        XCTAssertEqual(prompt.message, "96 processes will close.")
+        XCTAssertEqual(prompt.confirmTitle, "Quit")
+
+        let one = QuitCopy.application(name: "Notes", processCount: 1, force: false)
+        XCTAssertEqual(one.message, "1 process will close.")
+
+        let forced = QuitCopy.application(name: "Google Chrome", processCount: 96, force: true)
+        XCTAssertEqual(forced.title, "Force Quit Google Chrome?")
+        XCTAssertEqual(forced.message, "96 processes will end immediately.")
+        XCTAssertEqual(forced.confirmTitle, "Force Quit")
+
+        let process = QuitCopy.process(name: "node", force: false)
+        XCTAssertEqual(process.title, "Quit node?")
+        XCTAssertEqual(process.message, "This process will close.")
+    }
+
+    func testMacAppQuitAsksTheAppAndForceQuitSignalsEveryMember() {
+        let members: [Int32] = [400, 401, 402]
+        XCTAssertEqual(
+            AppQuitPlanner.plan(memberPIDs: members, runningApplicationPID: 400, force: false),
+            .askApplication(pid: 400)
+        )
+        XCTAssertEqual(
+            AppQuitPlanner.plan(memberPIDs: members, runningApplicationPID: 400, force: true),
+            .signal(pids: members, action: .forceQuit)
+        )
+        XCTAssertEqual(
+            AppQuitPlanner.plan(memberPIDs: members, runningApplicationPID: nil, force: false),
+            .signal(pids: members, action: .quit)
+        )
+        XCTAssertEqual(
+            AppQuitPlanner.plan(memberPIDs: [0, 1, 50], runningApplicationPID: 1, force: false),
+            .signal(pids: [50], action: .quit)
+        )
+    }
+
     func testRefusesToSignalPidZeroOrOne() {
         var calls: [Int32] = []
         let service = QuitService { pid, signal in

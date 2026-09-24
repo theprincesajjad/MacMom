@@ -42,7 +42,6 @@ final class GlanceMetricPage: NSView {
     }
 
     private func build() {
-        appearance = NSAppearance(named: .darkAqua)
         eyebrow.lineBreakMode = .byTruncatingTail
         eyebrow.maximumNumberOfLines = 1
         eyebrow.setContentHuggingPriority(.required, for: .vertical)
@@ -200,7 +199,7 @@ private final class GlanceAppBlock: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    func render(title: String, slots: [(icon: NSImage?, name: String, value: String, fraction: CGFloat)], tint: NSColor, emptyNote: String?) {
+    func render(title: String, slots: [(id: String, icon: NSImage?, name: String, value: String, fraction: CGFloat)], tint: NSColor, emptyNote: String?) {
         heading.stringValue = title
         if let emptyNote {
             note.stringValue = emptyNote
@@ -216,7 +215,7 @@ private final class GlanceAppBlock: NSView {
             }
             let slot = slots[index]
             row.isHidden = false
-            row.apply(icon: slot.icon, name: slot.name, value: slot.value, fraction: slot.fraction, tint: tint)
+            row.apply(id: slot.id, icon: slot.icon, name: slot.name, value: slot.value, fraction: slot.fraction, tint: tint)
         }
     }
 }
@@ -297,7 +296,7 @@ private final class CPUSection: NSView {
             slots: ranked.map { app in
                 let cpu = app.cpuPercent
                 return (
-                    app.icon,
+                    app.id, app.icon,
                     app.name,
                     GlanceFormat.percentApp(cpu),
                     cpu.isFinite ? CGFloat(min(1, max(0, cpu / 100))) : 0
@@ -393,7 +392,7 @@ private final class MemorySection: NSView {
             title: "Top Apps",
             slots: ranked.map { app in
                 (
-                    app.icon,
+                    app.id, app.icon,
                     app.name,
                     GlanceFormat.byteText(app.memoryBytes),
                     GlanceFormat.fraction(app.memoryBytes, of: max(total, 1))
@@ -470,7 +469,7 @@ private final class DiskSection: NSView {
                 } else {
                     fraction = 0
                 }
-                return (app.icon, app.name, GlanceFormat.rate(rate), fraction)
+                return (app.id, app.icon, app.name, GlanceFormat.rate(rate), fraction)
             },
             tint: GlanceTheme.accent(.disk),
             emptyNote: ranked.isEmpty ? "No apps yet." : nil
@@ -541,7 +540,7 @@ private final class NetworkSection: NSView {
             slots: ranked.map { app in
                 let rate = app.networkBytesPerSecond
                 return (
-                    app.icon,
+                    app.id, app.icon,
                     app.name,
                     GlanceFormat.rate(rate),
                     CGFloat(min(1, max(0, rate / topRate)))
@@ -619,7 +618,7 @@ private final class GPUSection: NSView {
             slots: ranked.map { app in
                 let percent = app.gpuPercent ?? 0
                 return (
-                    app.icon,
+                    app.id, app.icon,
                     app.name,
                     GlanceFormat.percentApp(percent),
                     CGFloat(min(1, max(0, percent / 100)))
@@ -706,7 +705,7 @@ private final class BatterySection: NSView {
                 slots: ranked.map { app in
                     let watts = app.powerWatts ?? 0
                     let fraction = top > 0 ? CGFloat(min(1, max(0, watts / top))) : 0
-                    return (app.icon, app.name, GlanceFormat.watts(watts), fraction)
+                    return (app.id, app.icon, app.name, GlanceFormat.watts(watts), fraction)
                 },
                 tint: GlanceTheme.accent(.battery),
                 emptyNote: nil
@@ -720,7 +719,7 @@ private final class BatterySection: NSView {
             slots: ranked.map { app in
                 let share = maxEnergy > 0 ? Double(app.energy) / Double(maxEnergy) * 100 : 0
                 let fraction: CGFloat = maxEnergy > 0 ? CGFloat(Double(app.energy) / Double(maxEnergy)) : 0
-                return (app.icon, app.name, GlanceFormat.percentApp(share), fraction)
+                return (app.id, app.icon, app.name, GlanceFormat.percentApp(share), fraction)
             },
             tint: GlanceTheme.accent(.battery),
             emptyNote: ranked.isEmpty ? "No apps yet." : nil

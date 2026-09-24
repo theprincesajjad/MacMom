@@ -12,6 +12,34 @@
 #include <string.h>
 #include <sys/sysctl.h>
 
+#define IDENTITY_SLOTS 4096
+
+static struct {
+    pid_t pid;
+    char name[128];
+    char path[1024];
+} identity_cache[IDENTITY_SLOTS];
+
+static int recall_identity(pid_t pid, char *name, int nameSize, char *path, int pathSize) {
+    unsigned slot = ((unsigned)pid) % IDENTITY_SLOTS;
+    if (identity_cache[slot].pid != pid || identity_cache[slot].path[0] == '\0') {
+        return 0;
+    }
+    strlcpy(name, identity_cache[slot].name, (size_t)nameSize);
+    strlcpy(path, identity_cache[slot].path, (size_t)pathSize);
+    return 1;
+}
+
+static void remember_identity(pid_t pid, const char *name, const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        return;
+    }
+    unsigned slot = ((unsigned)pid) % IDENTITY_SLOTS;
+    identity_cache[slot].pid = pid;
+    strlcpy(identity_cache[slot].name, name, sizeof(identity_cache[slot].name));
+    strlcpy(identity_cache[slot].path, path, sizeof(identity_cache[slot].path));
+}
+
 static uint64_t ticks_to_ns(uint64_t ticks) {
     static uint64_t numer = 0;
     static uint64_t denom = 1;
@@ -65,13 +93,12 @@ int appfold_list_processes(appfold_proc *out, int capacity) {
             continue;
         }
 
-        struct proc_bsdinfo bsd;
-        memset(&bsd, 0, sizeof(bsd));
-        int bsdBytes = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, (int)sizeof(bsd));
-
-        struct proc_taskinfo task;
-        memset(&task, 0, sizeof(task));
-        proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task, (int)sizeof(task));
+        struct proc_taskallinfo all;
+        memset(&all, 0, sizeof(all));
+        int allBytes = proc_pidinfo(pid, PROC_PIDTASKALLINFO, 0, &all, (int)sizeof(all));
+        if (allBytes != (int)sizeof(all)) {
+            continue;
+        }
 
         struct rusage_info_v4 usage;
         memset(&usage, 0, sizeof(usage));
@@ -80,13 +107,13 @@ int appfold_list_processes(appfold_proc *out, int capacity) {
         appfold_proc *row = &out[written];
         memset(row, 0, sizeof(*row));
         row->pid = (int32_t)pid;
-        row->ppid = bsdBytes == (int)sizeof(bsd) ? (int32_t)bsd.pbi_ppid : 0;
-        row->start_unix = bsdBytes == (int)sizeof(bsd) ? (int64_t)bsd.pbi_start_tvsec : 0;
+        row->ppid = (int32_t)all.pbsd.pbi_ppid;
+        row->start_unix = (int64_t)all.pbsd.pbi_start_tvsec;
 
         if (usageOK && usage.ri_phys_footprint > 0) {
             row->memory_bytes = usage.ri_phys_footprint;
         } else {
-            row->memory_bytes = task.pti_resident_size;
+            row->memory_bytes = all.ptinfo.pti_resident_size;
         }
 
         uint64_t cpuTicks = 0;
@@ -97,17 +124,20 @@ int appfold_list_processes(appfold_proc *out, int capacity) {
             row->disk_bytes = usage.ri_diskio_bytesread + usage.ri_diskio_byteswritten;
             row->energy = usage.ri_billed_energy;
         } else {
-            cpuTicks = task.pti_total_user + task.pti_total_system;
+            cpuTicks = all.ptinfo.pti_total_user + all.ptinfo.pti_total_system;
         }
         row->cpu_time_ns = ticks_to_ns(cpuTicks);
 
-        proc_name((int)pid, row->name, (uint32_t)sizeof(row->name));
-        row->name[sizeof(row->name) - 1] = '\0';
-        int pathBytes = proc_pidpath((int)pid, row->path, (uint32_t)sizeof(row->path));
-        if (pathBytes <= 0) {
-            row->path[0] = '\0';
-        } else {
-            row->path[sizeof(row->path) - 1] = '\0';
+        if (!recall_identity(pid, row->name, (int)sizeof(row->name), row->path, (int)sizeof(row->path))) {
+            proc_name((int)pid, row->name, (uint32_t)sizeof(row->name));
+            row->name[sizeof(row->name) - 1] = '\0';
+            int pathBytes = proc_pidpath((int)pid, row->path, (uint32_t)sizeof(row->path));
+            if (pathBytes <= 0) {
+                row->path[0] = '\0';
+            } else {
+                row->path[sizeof(row->path) - 1] = '\0';
+            }
+            remember_identity(pid, row->name, row->path);
         }
 
         written++;

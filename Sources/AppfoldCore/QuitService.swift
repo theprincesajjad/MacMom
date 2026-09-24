@@ -73,3 +73,56 @@ public struct QuitService {
         perform(pids: app.members.map(\.pid), action: action, confirmed: confirmed)
     }
 }
+
+/// Words on the confirm step. Nothing is signaled until the user accepts.
+public struct QuitPrompt: Equatable {
+    public var title: String
+    public var message: String
+    public var confirmTitle: String
+
+    public init(title: String, message: String, confirmTitle: String) {
+        self.title = title
+        self.message = message
+        self.confirmTitle = confirmTitle
+    }
+}
+
+public enum QuitCopy {
+    public static func application(name: String, processCount: Int, force: Bool) -> QuitPrompt {
+        let count = max(processCount, 0)
+        let noun = count == 1 ? "process" : "processes"
+        return QuitPrompt(
+            title: force ? "Force Quit \(name)?" : "Quit \(name)?",
+            message: force ? "\(count) \(noun) will end immediately." : "\(count) \(noun) will close.",
+            confirmTitle: force ? "Force Quit" : "Quit"
+        )
+    }
+
+    public static func process(name: String, force: Bool) -> QuitPrompt {
+        QuitPrompt(
+            title: force ? "Force Quit \(name)?" : "Quit \(name)?",
+            message: force ? "This process will end immediately." : "This process will close.",
+            confirmTitle: force ? "Force Quit" : "Quit"
+        )
+    }
+}
+
+/// How a confirmed quit is delivered.
+/// A Mac app is asked to exit. Force quit, and anything that is not a Mac app, is a signal to those pids.
+public enum AppQuitPlan: Equatable {
+    case askApplication(pid: Int32)
+    case signal(pids: [Int32], action: QuitAction)
+}
+
+public enum AppQuitPlanner {
+    public static func plan(memberPIDs: [Int32], runningApplicationPID: Int32?, force: Bool) -> AppQuitPlan {
+        let pids = memberPIDs.filter { $0 > 1 }
+        if force {
+            return .signal(pids: pids, action: .forceQuit)
+        }
+        if let runningApplicationPID, runningApplicationPID > 1, pids.contains(runningApplicationPID) {
+            return .askApplication(pid: runningApplicationPID)
+        }
+        return .signal(pids: pids, action: .quit)
+    }
+}

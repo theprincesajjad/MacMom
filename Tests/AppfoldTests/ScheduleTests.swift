@@ -63,6 +63,8 @@ final class ScheduleTests: XCTestCase {
         XCTAssertEqual(CPUDelta.percent(previousNS: 10, currentNS: 10, elapsed: 1), 0)
         XCTAssertEqual(CounterDelta.bytes(previous: 5, current: 8), 3)
         XCTAssertEqual(CounterDelta.bytes(previous: nil, current: 8), 0)
+        XCTAssertEqual(EnergyRate.watts(previousNanojoules: 1_000_000_000, currentNanojoules: 3_000_000_000, elapsed: 2) ?? -1, 1, accuracy: 0.001)
+        XCTAssertNil(EnergyRate.watts(previousNanojoules: nil, currentNanojoules: 10, elapsed: 1))
 
         let previous = HostCPUTicks(user: 10, system: 5, idle: 85, nice: 0)
         let current = HostCPUTicks(user: 20, system: 10, idle: 165, nice: 5)

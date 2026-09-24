@@ -118,6 +118,21 @@ final class HistoryAlertTests: XCTestCase {
         XCTAssertEqual(AlertRules.evaluate(series: samples, policy: policy), [])
     }
 
+    func testANewAlertIsAnnouncedOnce() {
+        let policy = AlertPolicy.standard
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let alerts = AlertRules.evaluate(series: hotSeries(policy: policy, start: start), policy: policy)
+        let first = AlertFeed.fresh(previous: [], alerts: alerts)
+        XCTAssertFalse(first.isEmpty)
+        XCTAssertTrue(first.contains { $0.title == "Hot" && $0.body == "Hot is using high CPU" })
+        let again = AlertFeed.fresh(previous: AlertFeed.ids(alerts), alerts: alerts)
+        XCTAssertEqual(again, [])
+        let cpuOnly = alerts.filter { if case .sustainedHighCPU = $0 { return true }; return false }
+        let rest = AlertFeed.fresh(previous: AlertFeed.ids(cpuOnly), alerts: alerts)
+        XCTAssertFalse(rest.contains { $0.id.hasPrefix("cpu:") })
+        XCTAssertTrue(rest.contains { $0.id.hasPrefix("memory:") })
+    }
+
     private func hotSeries(policy: AlertPolicy, start: Date) -> [UsageSample] {
         let count = max(policy.sustainedHighCPUCount, policy.sustainedMemoryCount)
         let steps = max(count - 1, 1)

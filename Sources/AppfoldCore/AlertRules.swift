@@ -72,6 +72,46 @@ public enum UsageAlert: Equatable {
             return "\(appName) is using the network heavily"
         }
     }
+
+    /// Stable id for one app and one kind of alert. Used to post a notification once.
+    public var noteID: String {
+        switch self {
+        case .sustainedHighCPU(let appID, _):
+            return "cpu:\(appID)"
+        case .sustainedMemoryClimb(let appID, _):
+            return "memory:\(appID)"
+        case .heavyDisk(let appID, _):
+            return "disk:\(appID)"
+        case .heavyNetwork(let appID, _):
+            return "network:\(appID)"
+        }
+    }
+}
+
+public struct AlertNote: Equatable {
+    public var id: String
+    public var title: String
+    public var body: String
+
+    public init(id: String, title: String, body: String) {
+        self.id = id
+        self.title = title
+        self.body = body
+    }
+}
+
+public enum AlertFeed {
+    public static func ids(_ alerts: [UsageAlert]) -> Set<String> {
+        Set(alerts.map(\.noteID))
+    }
+
+    /// Alerts that were not already announced. The same set posted again produces nothing.
+    public static func fresh(previous: Set<String>, alerts: [UsageAlert]) -> [AlertNote] {
+        alerts.compactMap { alert in
+            guard !previous.contains(alert.noteID) else { return nil }
+            return AlertNote(id: alert.noteID, title: alert.appName, body: alert.message)
+        }
+    }
 }
 
 public enum AlertRules {

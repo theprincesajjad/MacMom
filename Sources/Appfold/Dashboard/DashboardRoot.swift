@@ -7,12 +7,15 @@ final class DashboardRoot: NSView {
     var onSelectTab: ((DashTab) -> Void)?
     var onSelectApp: ((String) -> Void)?
     var onStopProjects: (([Int32]) -> Void)?
-    var onQuitApp: (() -> Void)?
-    var onForceQuitApp: (() -> Void)?
-    var onQuitMember: ((Int32) -> Void)?
-    var onForceQuitMember: ((Int32) -> Void)?
+    /// App id and whether the quit is forced. The window asks before anything is signaled.
+    var onQuitApp: ((String, Bool) -> Void)?
+    /// One process from a list, and whether the quit is forced.
+    var onQuitProcess: ((Int32, Bool) -> Void)?
+    /// Project name, its pids, and whether the quit is forced.
+    var onQuitProject: ((String, [Int32], Bool) -> Void)?
 
     private let pill = PillBar(frame: .zero)
+    private let alertStrip = DashAlertStrip()
     private let scroll = NSScrollView(frame: .zero)
     private var documentWidth: NSLayoutConstraint?
     private var lastState: DashState?
@@ -58,7 +61,9 @@ final class DashboardRoot: NSView {
             self.onSelectTab?(tab)
         }
 
+        alertStrip.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pill)
+        addSubview(alertStrip)
         addSubview(scroll)
 
         let pillWidth = pill.widthAnchor.constraint(equalToConstant: PillBar.barWidth())
@@ -70,7 +75,10 @@ final class DashboardRoot: NSView {
             pill.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 78),
             pill.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
             pillWidth,
-            scroll.topAnchor.constraint(equalTo: pill.bottomAnchor, constant: 8),
+            alertStrip.topAnchor.constraint(equalTo: pill.bottomAnchor, constant: 8),
+            alertStrip.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            alertStrip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            scroll.topAnchor.constraint(equalTo: alertStrip.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -97,6 +105,7 @@ final class DashboardRoot: NSView {
             builtKey = key
             install(page(for: selectedTab, state: state))
         }
+        alertStrip.set(state.alerts)
         shown?.update(state)
     }
 
@@ -128,6 +137,9 @@ final class DashboardRoot: NSView {
             page.onStop = { [weak self, weak page] in
                 self?.onStopProjects?(page?.idlePIDs ?? [])
             }
+            page.onQuitProject = { [weak self] name, pids, force in
+                self?.onQuitProject?(name, pids, force)
+            }
             return .projects(page)
         default:
             let page = MetricPage(tab: tab, state: state)
@@ -156,6 +168,70 @@ final class DashboardRoot: NSView {
         width.isActive = true
         documentWidth = width
         scroll.contentView.scroll(to: NSPoint.zero)
+    }
+}
+
+private final class DashAlertStrip: NSView {
+    private let stack = NSStackView()
+    private var heightLock: NSLayoutConstraint?
+    private var body: [NSLayoutConstraint] = []
+    private var shown: [String] = []
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.10).cgColor
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        let lock = heightAnchor.constraint(equalToConstant: 0)
+        lock.isActive = true
+        heightLock = lock
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func set(_ messages: [String]) {
+        if messages == shown { return }
+        shown = messages
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        NSLayoutConstraint.deactivate(body)
+        body = []
+        guard !messages.isEmpty else {
+            isHidden = true
+            heightLock?.isActive = true
+            return
+        }
+        heightLock?.isActive = false
+        isHidden = false
+        let visible = messages.prefix(4)
+        for message in visible {
+            let label = textLabel(message, size: 13, weight: .medium, color: NSColor.systemRed)
+            label.lineBreakMode = .byTruncatingTail
+            label.maximumNumberOfLines = 1
+            stack.addArrangedSubview(label)
+            label.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor, constant: -28).isActive = true
+        }
+        if messages.count > visible.count {
+            let more = textLabel("+\(messages.count - visible.count) more", size: 12, weight: .medium, color: DashTheme.secondaryText)
+            stack.addArrangedSubview(more)
+        }
+        body = [
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(body)
     }
 }
 
@@ -803,16 +879,31 @@ private final class MetricPage {
             guard let self, index >= 0, index < self.sortedApps.count else { return }
             self.owner?.onSelectApp?(self.sortedApps[index].id)
         }
+        list.onRightClickRow = { [weak self] index, event in
+            guard let self, self.sortedApps.indices.contains(index) else { return }
+            let app = self.sortedApps[index]
+            guard let row = self.list.rowView(at: index) else { return }
+            RowContextMenu.popUp(event, in: row, items: [
+                ("Quit \(app.name)", "power", { [weak self] in self?.owner?.onQuitApp?(app.id, false) }),
+                ("Force Quit \(app.name)", "xmark.circle", { [weak self] in self?.owner?.onQuitApp?(app.id, true) }),
+            ])
+        }
 
-        quitButton.onAction = { [weak self] in self?.owner?.onQuitApp?() }
-        forceQuitButton.onAction = { [weak self] in self?.owner?.onForceQuitApp?() }
+        quitButton.onAction = { [weak self] in
+            guard let id = self?.selectedAppID else { return }
+            self?.owner?.onQuitApp?(id, false)
+        }
+        forceQuitButton.onAction = { [weak self] in
+            guard let id = self?.selectedAppID else { return }
+            self?.owner?.onQuitApp?(id, true)
+        }
         quitProcessButton.onAction = { [weak self] in
             guard let pid = self?.resolvedPID() else { return }
-            self?.owner?.onQuitMember?(pid)
+            self?.owner?.onQuitProcess?(pid, false)
         }
         forceQuitProcessButton.onAction = { [weak self] in
             guard let pid = self?.resolvedPID() else { return }
-            self?.owner?.onForceQuitMember?(pid)
+            self?.owner?.onQuitProcess?(pid, true)
         }
     }
 
@@ -996,7 +1087,7 @@ private final class MetricPage {
                 fraction: fraction,
                 icon: app.icon,
                 selected: app.id == state.selectedAppID,
-                featured: index == 0 && text != dash && fraction > 0
+                featured: false
             )
         }
         list.setRows(rows)
@@ -1034,6 +1125,14 @@ private final class MetricPage {
         }
         for (row, member) in zip(memberRows, state.members) {
             row.apply(member)
+            let pid = member.pid
+            let name = member.name.isEmpty ? "Process" : member.name
+            row.onRightClick = { [weak self] event in
+                RowContextMenu.popUp(event, in: row, items: [
+                    ("Quit \(name)", "power", { [weak self] in self?.owner?.onQuitProcess?(pid, false) }),
+                    ("Force Quit \(name)", "xmark.circle", { [weak self] in self?.owner?.onQuitProcess?(pid, true) }),
+                ])
+            }
         }
         highlightMembers(tint: tint)
     }
@@ -1139,6 +1238,7 @@ private final class MetricPage {
 private final class MemberRow: NSView {
     var pid: Int32 = 0
     var onSelect: ((Int32) -> Void)?
+    var onRightClick: ((NSEvent) -> Void)?
     private let nameField = textLabel("", size: 13, weight: .semibold, color: DashTheme.primaryText)
     private let metaField = textLabel("", size: 12, weight: .regular, color: DashTheme.secondaryText)
     private let meter = MeterBar(frame: .zero)
@@ -1190,6 +1290,18 @@ private final class MemberRow: NSView {
         meter.color = tint
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(convert(point, from: superview)) ? self : nil
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        if let onRightClick {
+            onRightClick(event)
+        } else {
+            super.rightMouseDown(with: event)
+        }
+    }
+
     @objc private func clicked() {
         onSelect?(pid)
     }
@@ -1224,6 +1336,7 @@ private final class ProjectsPage {
 
     let view: NSView
     var onStop: (() -> Void)?
+    var onQuitProject: ((String, [Int32], Bool) -> Void)?
     private(set) var idlePIDs: [Int32] = []
     private let content = NSStackView()
     private let banner = ProjectsBanner(frame: .zero)
@@ -1296,6 +1409,15 @@ private final class ProjectsPage {
         }
         for (row, project) in zip(rowViews, state.projects) {
             row.apply(project)
+            let name = project.name.isEmpty ? "Project" : project.name
+            let pids = project.pids
+            row.onRightClick = { [weak self] event in
+                guard !pids.isEmpty else { return }
+                RowContextMenu.popUp(event, in: row, items: [
+                    ("Quit \(name)", "power", { [weak self] in self?.onQuitProject?(name, pids, false) }),
+                    ("Force Quit \(name)", "xmark.circle", { [weak self] in self?.onQuitProject?(name, pids, true) }),
+                ])
+            }
         }
     }
 
@@ -1326,6 +1448,7 @@ private final class ProjectsPage {
 }
 
 private final class ProjectRow: NSView {
+    var onRightClick: ((NSEvent) -> Void)?
     private let icon = symbolView("folder", pointSize: 15, tint: DashTheme.accent(.projects), side: 18)
     private let nameField = textLabel("", size: 14, weight: .semibold, color: DashTheme.primaryText)
     private let runtimeField = textLabel("", size: 12, weight: .regular, color: DashTheme.secondaryText)
@@ -1377,6 +1500,18 @@ private final class ProjectRow: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(convert(point, from: superview)) ? self : nil
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        if let onRightClick {
+            onRightClick(event)
+        } else {
+            super.rightMouseDown(with: event)
+        }
     }
 
     func apply(_ project: DashProject) {

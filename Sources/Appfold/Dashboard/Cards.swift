@@ -96,7 +96,10 @@ private func unitRange(in text: String) -> Range<String.Index>? {
 
 private class ClickSurface: NSView {
     var onClick: (() -> Void)?
+    var onRightClick: ((NSEvent) -> Void)?
     private var armed = false
+
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -114,6 +117,14 @@ private class ClickSurface: NSView {
             onClick?()
         }
         armed = false
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        if let onRightClick {
+            onRightClick(event)
+        } else {
+            super.rightMouseDown(with: event)
+        }
     }
 }
 
@@ -487,10 +498,14 @@ final class MiniStat: NSView {
         addSubview(header)
         addSubview(body)
 
-        let bottomInset = 14 + footer
-        let hug = body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -bottomInset)
-        hug.priority = .defaultLow
+        // One height for every summary card. A caption or a meter must not
+        // make its card taller than the others in the row.
+        let bottomInset: CGFloat = max(16, 14 + footer)
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 112),
             badge.widthAnchor.constraint(equalToConstant: 22),
             badge.heightAnchor.constraint(equalToConstant: 22),
             icon.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
@@ -510,7 +525,6 @@ final class MiniStat: NSView {
             body.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -bottomInset),
             nameRow.trailingAnchor.constraint(equalTo: body.trailingAnchor),
             captionLabel.widthAnchor.constraint(lessThanOrEqualTo: body.widthAnchor),
-            hug,
         ])
     }
 
@@ -567,6 +581,7 @@ final class AppListCard: NSView {
     }
 
     var onSelectRow: ((Int) -> Void)?
+    var onRightClickRow: ((Int, NSEvent) -> Void)?
 
     private let tint: NSColor
     private let rowsContainer = NSView()
@@ -637,6 +652,9 @@ final class AppListCard: NSView {
             view.onClick = { [weak self] in
                 self?.onSelectRow?(rowIndex)
             }
+            view.onRightClick = { [weak self] event in
+                self?.onRightClickRow?(rowIndex, event)
+            }
             rowsContainer.addSubview(view)
             NSLayoutConstraint.activate([
                 view.leadingAnchor.constraint(equalTo: rowsContainer.leadingAnchor),
@@ -654,6 +672,10 @@ final class AppListCard: NSView {
             rowsBottom = rowsContainer.heightAnchor.constraint(equalToConstant: 0)
         }
         rowsBottom?.isActive = true
+    }
+
+    func rowView(at index: Int) -> NSView? {
+        rowViews.indices.contains(index) ? rowViews[index] : nil
     }
 }
 
@@ -755,13 +777,13 @@ private final class AppRowView: ClickSurface {
 
     func apply(_ row: AppListCard.Row) {
         let measured = row.valueText != "—"
-        plate.isHidden = !measured || (!row.selected && !row.featured)
+        plate.isHidden = !row.selected
         nameLabel.stringValue = row.name
         detailLabel.stringValue = row.detail
         detailLabel.isHidden = row.detail.isEmpty
         valueLabel.stringValue = row.valueText
         meter.fraction = measured ? row.fraction : 0
-        meter.emphasized = measured && (row.selected || row.featured)
+        meter.emphasized = row.selected
         if let icon = row.icon {
             let token = ObjectIdentifier(icon)
             if iconToken != token {

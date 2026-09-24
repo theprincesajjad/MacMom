@@ -132,7 +132,7 @@ enum GlanceExport {
     }
 
     private static func drawHeader(left: CGFloat, right: CGFloat, top: CGFloat, canvasHeight: CGFloat) -> CGFloat {
-        let symbol = GlanceTheme.symbol("waveform", pointSize: 18, tint: GlanceTheme.accent(.cpu))
+        let symbol = DashTheme.symbol("waveform", pointSize: 18, tint: GlanceTheme.accent(.cpu))
         let titleFont = NSFont.systemFont(ofSize: 22, weight: .semibold)
         let modelFont = NSFont.systemFont(ofSize: 16, weight: .medium)
         let titleHeight = titleFont.ascender - titleFont.descender

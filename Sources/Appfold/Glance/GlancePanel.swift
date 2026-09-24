@@ -12,6 +12,7 @@ final class GlancePanel: NSView {
     private let metricPage = GlanceMetricPage(tab: .cpu)
     private let projectsPage = GlanceProjectsPage(frame: .zero)
     private let rail = GlanceIconRail(frame: .zero)
+    private let alertStrip = GlanceAlertStrip()
     private let scrollView = NSScrollView(frame: .zero)
     private let openButton = GlanceButton(title: "Open Appfold", symbol: "macwindow")
     private let settingsButton = GlanceButton(title: "", symbol: "gearshape", circular: true)
@@ -28,7 +29,6 @@ final class GlancePanel: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        appearance = NSAppearance(named: .darkAqua)
         applyChrome()
 
         overviewPage.onOpenTab = { [weak self] tab in
@@ -81,7 +81,9 @@ final class GlancePanel: NSView {
         footer.translatesAutoresizingMaskIntoConstraints = false
 
         rail.translatesAutoresizingMaskIntoConstraints = false
+        alertStrip.translatesAutoresizingMaskIntoConstraints = false
         addSubview(rail)
+        addSubview(alertStrip)
         addSubview(scrollView)
         addSubview(footer)
 
@@ -91,7 +93,11 @@ final class GlancePanel: NSView {
             rail.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             rail.heightAnchor.constraint(equalToConstant: 52),
 
-            scrollView.topAnchor.constraint(equalTo: rail.bottomAnchor),
+            alertStrip.topAnchor.constraint(equalTo: rail.bottomAnchor),
+            alertStrip.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            alertStrip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+
+            scrollView.topAnchor.constraint(equalTo: alertStrip.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: footer.topAnchor),
@@ -115,7 +121,13 @@ final class GlancePanel: NSView {
         applyChrome()
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     func render(_ state: DashState) {
+        alertStrip.set(state.alerts)
         overviewPage.render(state)
         metricPage.render(state)
         projectsPage.render(state)
@@ -126,7 +138,7 @@ final class GlancePanel: NSView {
     }
 
     private func applyChrome() {
-        layer?.backgroundColor = GlanceTheme.canvas.cgColor
+        layer?.backgroundColor = GlanceTheme.paint(GlanceTheme.canvas, effectiveAppearance)
         layer?.cornerRadius = GlanceTheme.panelRadius
         layer?.masksToBounds = true
         layer?.borderWidth = 1
@@ -196,7 +208,6 @@ private final class GlanceIconRail: NSView {
         self.slots = slots
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = GlanceTheme.card.cgColor
         layer?.cornerRadius = GlanceTheme.cardRadius
         layer?.masksToBounds = true
 
@@ -222,6 +233,12 @@ private final class GlanceIconRail: NSView {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = GlanceTheme.paint(GlanceTheme.card, effectiveAppearance)
+    }
 
     private func applySelection() {
         for slot in slots {
@@ -302,6 +319,63 @@ private final class GlanceRailSlot: NSView {
             pointSize: 16,
             tint: isSelected ? GlanceTheme.primary : GlanceTheme.tertiary
         )
+        icon.contentTintColor = isSelected ? GlanceTheme.primary : GlanceTheme.tertiary
         needsLayout = true
+    }
+}
+
+private final class GlanceAlertStrip: NSView {
+    private let stack = NSStackView()
+    private var heightLock: NSLayoutConstraint?
+    private var body: [NSLayoutConstraint] = []
+    private var shown: [String] = []
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        layer?.backgroundColor = NSColor(srgbRed: 0.45, green: 0.18, blue: 0.16, alpha: 1).cgColor
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        let lock = heightAnchor.constraint(equalToConstant: 0)
+        lock.isActive = true
+        heightLock = lock
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func set(_ messages: [String]) {
+        if messages == shown { return }
+        shown = messages
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        NSLayoutConstraint.deactivate(body)
+        body = []
+        guard !messages.isEmpty else {
+            isHidden = true
+            heightLock?.isActive = true
+            return
+        }
+        heightLock?.isActive = false
+        isHidden = false
+        for message in messages.prefix(3) {
+            let label = glanceLabel(message, size: 12, weight: .medium, color: NSColor(srgbRed: 1, green: 0.78, blue: 0.74, alpha: 1))
+            label.lineBreakMode = .byTruncatingTail
+            label.maximumNumberOfLines = 1
+            stack.addArrangedSubview(label)
+        }
+        body = [
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(body)
     }
 }

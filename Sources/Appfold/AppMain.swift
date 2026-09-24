@@ -2,6 +2,7 @@ import AppKit
 import AppfoldCore
 import Darwin
 import UniformTypeIdentifiers
+import UserNotifications
 
 private final class AppBox {
     static var delegate: AppDelegate?
@@ -28,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private var snapshot: SystemSnapshot?
     private var alerts: [UsageAlert] = []
+    private var announcedAlertIDs: Set<String> = []
     private var selectedAppID: String?
     private var selectedProcessPID: Int32?
     private var selectedHistoryRange: HistoryRange = .last12Hours
@@ -45,6 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         controller.onQuit = {
             NSApp.terminate(nil)
+        }
+        GlanceActions.quitApp = { [weak self] id, force in
+            self?.quitApp(id: id, force: force)
         }
         return controller
     }()
@@ -92,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installMainMenu()
         installStatusItem()
         installTerminateOnSignal()
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiatedAllowingIdleSystemSleep],
             reason: "Keep the usage sample timer running"
@@ -133,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         SnapshotFile.write(snapshot)
         alertRing.add(from: snapshot)
         alerts = AlertRules.evaluate(series: alertRing.series(), policy: .standard)
+        publishAlerts()
         historyWriter.write(snapshot: snapshot, store: historyStore)
         recordSeries(snapshot, now: now)
         updateStatusItem()
@@ -196,27 +203,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let main = NSMenu()
         let appItem = NSMenuItem()
         main.addItem(appItem)
-        let appMenu = NSMenu(title: "Appfold")
-        let open = NSMenuItem(title: "Open Appfold", action: #selector(openMainWindow(_:)), keyEquivalent: "o")
+        let appMenu = NSMenu(title: "Open Activity")
+        let open = NSMenuItem(title: "Open Activity", action: #selector(openMainWindow(_:)), keyEquivalent: "o")
         open.target = self
         appMenu.addItem(open)
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "Quit Appfold", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: "Quit Open Activity", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
         NSApp.mainMenu = main
+    }
+
+    private func statusMark() -> NSImage {
+        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in
+            let path = NSBezierPath()
+            path.lineWidth = 1.7
+            path.lineCapStyle = .round
+            path.lineJoinStyle = .round
+            path.move(to: NSPoint(x: 1.2, y: 6))
+            path.line(to: NSPoint(x: 4.5, y: 6))
+            path.line(to: NSPoint(x: 7.2, y: 12.4))
+            path.line(to: NSPoint(x: 10.2, y: 3.2))
+            path.line(to: NSPoint(x: 14.6, y: 8.2))
+            NSColor.black.setStroke()
+            path.stroke()
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            if let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Appfold") {
-                image.isTemplate = true
-                image.size = NSSize(width: 16, height: 14)
-                button.image = image
-            }
+            let image = statusMark()
+            image.isTemplate = true
+            button.image = image
             button.imagePosition = .imageLeading
             button.title = " —"
-            button.toolTip = "Appfold"
+            button.toolTip = "Open Activity"
             button.target = self
             button.action = #selector(togglePopover(_:))
             button.sendAction(on: [.leftMouseUp])
@@ -231,6 +255,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let figure = String(format: " %.0f%%", snapshot.systemCPUPercent)
         statusItem?.button?.title = alerts.isEmpty ? figure : "!" + figure
+        statusItem?.button?.toolTip = alerts.isEmpty ? "Open Activity" : alerts.map(\.message).joined(separator: "\n")
+    }
+
+    /// Posts a notification the first time an alert appears, and drops it when the alert clears.
+    private func publishAlerts() {
+        let current = AlertFeed.ids(alerts)
+        let fresh = AlertFeed.fresh(previous: announcedAlertIDs, alerts: alerts)
+        let retired = announcedAlertIDs.subtracting(current)
+        announcedAlertIDs = current
+        let center = UNUserNotificationCenter.current()
+        if !retired.isEmpty {
+            center.removeDeliveredNotifications(withIdentifiers: Array(retired))
+        }
+        guard !fresh.isEmpty else { return }
+        center.getNotificationSettings { settings in
+            let allowed: Set<UNAuthorizationStatus> = [.authorized, .provisional]
+            guard allowed.contains(settings.authorizationStatus) else { return }
+            for note in fresh {
+                let content = UNMutableNotificationContent()
+                content.title = note.title
+                content.body = note.body
+                content.sound = .default
+                center.add(UNNotificationRequest(identifier: note.id, content: content, trigger: nil))
+            }
+        }
     }
 
     @objc private func togglePopover(_ sender: Any?) {
@@ -341,35 +390,126 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func quitApp(force: Bool) {
-        guard let app = selectedApp() else {
+        guard let id = selectedAppID else {
             NSSound.beep()
             return
         }
-        let title = force ? "Force Quit \(app.name)?" : "Quit \(app.name)?"
-        let message = force
-            ? "\(app.name) will end immediately, including its helper processes."
-            : "\(app.name) will be asked to exit, including its helper processes."
-        guard QuitConfirmation.ask(title: title, message: message, confirmTitle: force ? "Force Quit" : "Quit") else {
+        quitApp(id: id, force: force)
+    }
+
+    private func quitApp(id: String, force: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            self?.commitAppQuit(id: id, force: force)
+        }
+    }
+
+    private func commitAppQuit(id: String, force: Bool) {
+        guard let app = snapshot?.apps.first(where: { $0.id == id }) else {
+            NSSound.beep()
             return
         }
-        _ = QuitService.live().perform(app: app, action: force ? .forceQuit : .quit, confirmed: true)
+        guard !app.members.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        let prompt = QuitCopy.application(name: app.name, processCount: app.members.count, force: force)
+        guard QuitConfirmation.ask(
+            title: prompt.title,
+            message: prompt.message,
+            confirmTitle: prompt.confirmTitle,
+            icon: icon(forBundle: app.bundlePath) ?? icon(forBundle: app.members.first?.executablePath),
+            destructive: force
+        ) else { return }
+        let pids = app.members.map(\.pid)
+        let runningPID = RunningAppLookup.pid(bundlePath: app.bundlePath, memberPIDs: pids)
+        let plan = AppQuitPlanner.plan(memberPIDs: pids, runningApplicationPID: runningPID, force: force)
+        if !deliver(plan, fallbackPIDs: pids) {
+            QuitConfirmation.failed(name: app.name)
+        }
         refreshNow()
     }
 
     private func quitProcess(force: Bool) {
-        guard let process = selectedProcess() else {
+        guard let pid = selectedProcessPID else {
             NSSound.beep()
             return
         }
-        let title = force ? "Force Quit \(process.name)?" : "Quit \(process.name)?"
-        let message = force
-            ? "Process \(process.pid) will end immediately."
-            : "Process \(process.pid) will be asked to exit."
-        guard QuitConfirmation.ask(title: title, message: message, confirmTitle: force ? "Force Quit" : "Quit") else {
+        quitProcess(pid: pid, force: force)
+    }
+
+    private func quitProcess(pid: Int32, force: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            self?.commitProcessQuit(pid: pid, force: force)
+        }
+    }
+
+    private func commitProcessQuit(pid: Int32, force: Bool) {
+        guard let process = snapshot?.apps.lazy.flatMap(\.members).first(where: { $0.pid == pid }) else {
+            NSSound.beep()
             return
         }
-        _ = QuitService.live().perform(pids: [process.pid], action: force ? .forceQuit : .quit, confirmed: true)
+        if let owner = snapshot?.apps.first(where: { $0.members.contains { $0.pid == pid } }),
+           RunningAppLookup.pid(bundlePath: owner.bundlePath, memberPIDs: owner.members.map(\.pid)) == pid {
+            commitAppQuit(id: owner.id, force: force)
+            return
+        }
+        let name = process.name.isEmpty ? "Process" : process.name
+        let prompt = QuitCopy.process(name: name, force: force)
+        guard QuitConfirmation.ask(
+            title: prompt.title,
+            message: prompt.message,
+            confirmTitle: prompt.confirmTitle,
+            icon: icon(forBundle: process.bundlePath) ?? icon(forBundle: process.executablePath),
+            destructive: force
+        ) else { return }
+        let plan = AppQuitPlanner.plan(memberPIDs: [pid], runningApplicationPID: nil, force: force)
+        if !deliver(plan, fallbackPIDs: [pid]) {
+            QuitConfirmation.failed(name: name)
+        }
         refreshNow()
+    }
+
+    private func quitProject(name: String, pids: [Int32], force: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            self?.commitProjectQuit(name: name, pids: pids, force: force)
+        }
+    }
+
+    private func commitProjectQuit(name: String, pids: [Int32], force: Bool) {
+        guard !pids.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        let prompt = QuitCopy.application(name: name, processCount: pids.count, force: force)
+        guard QuitConfirmation.ask(
+            title: prompt.title,
+            message: prompt.message,
+            confirmTitle: prompt.confirmTitle,
+            icon: nil,
+            destructive: force
+        ) else { return }
+        let plan = AppQuitPlanner.plan(memberPIDs: pids, runningApplicationPID: nil, force: force)
+        if !deliver(plan, fallbackPIDs: pids) {
+            QuitConfirmation.failed(name: name)
+        }
+        refreshNow()
+    }
+
+    /// Asks a Mac app to quit, or signals the pids. Returns true when the request was accepted by the system.
+    private func deliver(_ plan: AppQuitPlan, fallbackPIDs: [Int32]) -> Bool {
+        switch plan {
+        case .askApplication(let pid):
+            if NSRunningApplication(processIdentifier: pid)?.terminate() == true {
+                return true
+            }
+            return signalSucceeded(QuitService.live().perform(pids: fallbackPIDs, action: .quit, confirmed: true))
+        case .signal(let pids, let action):
+            return signalSucceeded(QuitService.live().perform(pids: pids, action: action, confirmed: true))
+        }
+    }
+
+    private func signalSucceeded(_ outcome: QuitOutcome) -> Bool {
+        outcome.signals.contains { $0.result == 0 }
     }
 
     private func selectedApp() -> AppRow? {
@@ -506,15 +646,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self, let snapshot = self.snapshot else { return }
             self.renderDashboard(now: Date(), snapshot: snapshot)
         }
-        root.onQuitApp = { [weak self] in self?.quitApp(force: false) }
-        root.onForceQuitApp = { [weak self] in self?.quitApp(force: true) }
-        root.onQuitMember = { [weak self] pid in
-            self?.selectedProcessPID = pid
-            self?.quitProcess(force: false)
+        root.onQuitApp = { [weak self] id, force in
+            self?.quitApp(id: id, force: force)
         }
-        root.onForceQuitMember = { [weak self] pid in
+        root.onQuitProcess = { [weak self] pid, force in
             self?.selectedProcessPID = pid
-            self?.quitProcess(force: true)
+            self?.quitProcess(pid: pid, force: force)
+        }
+        root.onQuitProject = { [weak self] name, pids, force in
+            self?.quitProject(name: name, pids: pids, force: force)
         }
         root.onStopProjects = { [weak self] pids in self?.stopProjects(pids) }
         dashboard = root
@@ -525,7 +665,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Appfold"
+        window.title = "Open Activity"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
@@ -544,7 +684,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard QuitConfirmation.ask(
             title: "Stop idle dev servers?",
             message: "They will be asked to exit.",
-            confirmTitle: "Stop"
+            confirmTitle: "Stop",
+            icon: nil,
+            destructive: false
         ) else { return }
         _ = QuitService.live().perform(pids: pids, action: .quit, confirmed: true)
         refreshNow()
@@ -730,9 +872,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 diskBytesPerSecond: sampler.lastElapsed > 0 ? Double(app.diskBytes) / sampler.lastElapsed : 0,
                 networkBytesPerSecond: 0,
                 energy: app.energy,
-                powerWatts: nil,
+                powerWatts: powerWatts(of: app),
                 gpuPercent: nil,
-                icon: icon(forBundle: app.bundlePath)
+                icon: icon(forBundle: app.bundlePath) ?? icon(forBundle: app.members.first?.executablePath)
             ))
         }
         state.apps = apps
@@ -769,13 +911,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return state
     }
 
+    private func powerWatts(of app: AppRow) -> Double? {
+        var total = 0.0
+        var measured = false
+        for member in app.members {
+            guard let watts = sampler.watts(for: member.pid) else { continue }
+            measured = true
+            total += watts
+        }
+        return measured ? total : nil
+    }
+
     private func icon(forBundle path: String?) -> NSImage? {
-        guard let path else { return nil }
+        guard let path, !path.isEmpty else { return nil }
         if let cached = iconCache[path] { return cached }
-        guard iconCache.count < 64 else { return nil }
-        let image = NSWorkspace.shared.icon(forFile: path)
-        image.size = NSSize(width: 32, height: 32)
+        guard iconCache.count < 128 else { return nil }
+        let source = NSWorkspace.shared.icon(forFile: path)
+        let image = rasterIcon(source, side: 32)
         iconCache[path] = image
+        return image
+    }
+
+    private func rasterIcon(_ source: NSImage, side: CGFloat) -> NSImage {
+        let pixels = Int(side)
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixels,
+            pixelsHigh: pixels,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            source.size = NSSize(width: side, height: side)
+            return source
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        source.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: NSSize(width: side, height: side))
+        image.addRepresentation(rep)
         return image
     }
 
@@ -852,12 +1031,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var openRow: NSView?
         if kind == .menu {
             openRow = buttonRow([
-                ("Open Appfold", #selector(openMainWindow(_:))),
-                ("Quit Appfold", #selector(NSApplication.terminate(_:)))
+                ("Open Activity", #selector(openMainWindow(_:))),
+                ("Quit Open Activity", #selector(NSApplication.terminate(_:)))
             ])
         } else {
             openRow = buttonRow([
-                ("Quit Appfold", #selector(NSApplication.terminate(_:)))
+                ("Quit Open Activity", #selector(NSApplication.terminate(_:)))
             ])
         }
 
@@ -1062,15 +1241,27 @@ private final class StringTableSource: NSObject, NSTableViewDataSource, NSTableV
     }
 }
 
-private enum QuitConfirmation {
-    static func ask(title: String, message: String, confirmTitle: String) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: confirmTitle)
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+private enum RunningAppLookup {
+    /// Pid of the Mac app that owns this bundle, when that pid is one of the grouped processes.
+    static func pid(bundlePath: String?, memberPIDs: [Int32]) -> Int32? {
+        let members = Set(memberPIDs)
+        let running = NSWorkspace.shared.runningApplications
+        if let bundlePath {
+            let wanted = URL(fileURLWithPath: bundlePath).resolvingSymlinksInPath().path
+            if let match = running.first(where: { app in
+                guard let path = app.bundleURL?.resolvingSymlinksInPath().path else { return false }
+                return path == wanted && members.contains(app.processIdentifier)
+            }) {
+                return match.processIdentifier
+            }
+        }
+        for pid in memberPIDs {
+            guard let app = NSRunningApplication(processIdentifier: pid), app.bundleURL != nil else { continue }
+            if app.activationPolicy == .regular || app.activationPolicy == .accessory {
+                return pid
+            }
+        }
+        return nil
     }
 }
 

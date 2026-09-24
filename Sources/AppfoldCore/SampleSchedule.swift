@@ -4,7 +4,7 @@ import Foundation
 /// The menu-bar app uses this same type: closed windows wait `closedInterval`.
 public struct SampleSchedule {
     public static let closedInterval: TimeInterval = 5
-    public static let openInterval: TimeInterval = 1
+    public static let openInterval: TimeInterval = 2
 
     public var windowVisible: Bool
     private var lastSample: Date?
@@ -74,6 +74,15 @@ public enum HostCPU {
         let previous32 = previous % mask
         if current32 >= previous32 { return current32 - previous32 }
         return (mask - previous32) + current32
+    }
+}
+
+public enum EnergyRate {
+    /// `ri_billed_energy` counts nanojoules. Watts are joules per second.
+    /// Nil until two readings exist.
+    public static func watts(previousNanojoules: UInt64?, currentNanojoules: UInt64, elapsed: TimeInterval) -> Double? {
+        guard let previousNanojoules, elapsed > 0, currentNanojoules >= previousNanojoules else { return nil }
+        return Double(currentNanojoules - previousNanojoules) / 1_000_000_000 / elapsed
     }
 }
 

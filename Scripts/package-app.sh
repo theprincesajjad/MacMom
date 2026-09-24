@@ -9,5 +9,9 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 cp "$BIN" "$APP_DIR/Contents/MacOS/Appfold"
 cp Info.plist "$APP_DIR/Contents/Info.plist"
+mkdir -p "$APP_DIR/Contents/Resources"
+if [[ -f Assets/AppIcon.icns ]]; then
+  cp Assets/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
+fi
 codesign --force --sign - "$APP_DIR"
 echo "$APP_DIR"

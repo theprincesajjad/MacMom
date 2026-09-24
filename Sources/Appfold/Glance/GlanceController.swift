@@ -44,7 +44,6 @@ final class GlanceController: NSObject, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.isMovable = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        panel.appearance = NSAppearance(named: .darkAqua)
         panel.isReleasedWhenClosed = false
         glance.autoresizingMask = [.width, .height]
         panel.contentView = glance
