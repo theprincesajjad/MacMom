@@ -37,6 +37,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var menuPanel: PanelUI?
     private var windowPanel: PanelUI?
     private var mainWindow: NSWindow?
+    private var dashboard: DashboardRoot?
+    private var cpuSeries: [Double] = []
+    private var memorySeries: [Double] = []
+    private var diskSeries: [Double] = []
+    private var netSeries: [Double] = []
+    private var gpuSeries: [Double] = []
+    private var batterySeries: [Double] = []
+    private var sessionNetBytes: Double = 0
+    private var sessionDiskWrite: Double = 0
+    private var lastSeriesAt: Date?
+    private var cpuSum: Double = 0
+    private var cpuCount: Int = 0
+    private var gpuSum: Double = 0
+    private var gpuCount: Int = 0
+    private var gpuPeak: Double?
+    private var liveProjects: [ProjectGroup] = []
+    private var projectsScanned = false
+    private var lastProjectScan: Date?
+    private var projectBusy: [String: Date] = [:]
+    private var cachedBattery = BatteryStatus(hasBattery: false, onACPower: true, percent: nil, minutesRemaining: nil, cycleCount: nil, healthPercent: nil, watts: nil, temperatureC: nil)
+    private var cachedMemory = MemoryBreakdown(wiredBytes: 0, compressedBytes: 0, cachedBytes: 0, freeBytes: 0, swapBytes: 0, totalBytes: 0)
+    private var cachedVolumes: [VolumeInfo] = []
+    private var cachedInterface = InterfaceInfo(bsdName: "", kind: "", bytesIn: 0, bytesOut: 0)
+    private var cachedGPU = GPUStatus(name: "", utilizationPercent: nil, memoryBytes: nil)
+    private var hostReadAt: Date?
+    private var lastBytesIn: UInt64?
+    private var lastBytesOut: UInt64?
+    private var uploadPerSecond: Double = 0
+    private var downloadPerSecond: Double = 0
+    private var iconCache: [String: NSImage] = [:]
     private var timer: Timer?
     private var activity: NSObjectProtocol?
     private var termSource: DispatchSourceSignal?
@@ -54,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refresh(now: now)
         schedule.markSampled(at: now)
         scheduleNext()
+        if ProcessInfo.processInfo.environment["APPFOLD_SHOW_WINDOW"] == "1" {
+            openMainWindow(nil)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -83,8 +116,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alertRing.add(from: snapshot)
         alerts = AlertRules.evaluate(series: alertRing.series(), policy: .standard)
         historyWriter.write(snapshot: snapshot, store: historyStore)
+        recordSeries(snapshot, now: now)
         updateStatusItem()
-        if mainWindow?.isVisible == true || popover?.isShown == true {
+        if mainWindow?.isVisible == true {
+            renderDashboard(now: now)
+        }
+        if popover?.isShown == true {
             renderLists()
         }
     }
@@ -166,22 +203,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func togglePopover(_ sender: Any?) {
-        guard let button = statusItem?.button else { return }
-        if popover == nil {
-            popover = makePopover()
-        }
-        guard let popover else { return }
-        if popover.isShown {
-            popover.performClose(sender)
-            return
-        }
-        renderLists()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        openMainWindow(sender)
     }
 
     @objc private func openMainWindow(_ sender: Any?) {
         if mainWindow == nil {
             mainWindow = makeWindow()
+        }
+        if let name = ProcessInfo.processInfo.environment["APPFOLD_TAB"],
+           let match = DashTab.allCases.first(where: { $0.title.lowercased() == name.lowercased() }) {
+            dashboard?.selectedTab = match
         }
         schedule.windowVisible = true
         NSApp.setActivationPolicy(.regular)
@@ -191,7 +222,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.activate(ignoringOtherApps: true)
         }
         mainWindow?.makeKeyAndOrderFront(nil)
-        renderLists()
+        if let snapshot {
+            renderDashboard(now: Date(), snapshot: snapshot)
+        }
         scheduleNext()
         popover?.performClose(sender)
     }
@@ -376,22 +409,267 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func makeWindow() -> NSWindow {
-        let panel = makePanel(kind: .window)
-        windowPanel = panel
-        bindSelection(of: panel)
+        let root = DashboardRoot()
+        root.onSelectTab = { [weak self] _ in
+            guard let self, let snapshot = self.snapshot else { return }
+            self.renderDashboard(now: Date(), snapshot: snapshot)
+        }
+        root.onSelectApp = { [weak self] id in
+            self?.selectedAppID = id
+            self?.selectedProcessPID = self?.snapshot?.apps.first { $0.id == id }?.members.first?.pid
+            guard let self, let snapshot = self.snapshot else { return }
+            self.renderDashboard(now: Date(), snapshot: snapshot)
+        }
+        root.onQuitApp = { [weak self] in self?.quitApp(force: false) }
+        root.onForceQuitApp = { [weak self] in self?.quitApp(force: true) }
+        root.onQuitMember = { [weak self] pid in
+            self?.selectedProcessPID = pid
+            self?.quitProcess(force: false)
+        }
+        root.onForceQuitMember = { [weak self] pid in
+            self?.selectedProcessPID = pid
+            self?.quitProcess(force: true)
+        }
+        root.onStopProjects = { [weak self] pids in self?.stopProjects(pids) }
+        dashboard = root
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 860, height: 760),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 800),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "Appfold"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.appearance = NSAppearance(named: .aqua)
+        window.backgroundColor = DashTheme.canvas
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.contentView = panel.view
-        window.minSize = NSSize(width: 680, height: 560)
+        window.contentView = root
+        window.minSize = NSSize(width: 1020, height: 680)
         window.center()
         return window
+    }
+
+    private func stopProjects(_ pids: [Int32]) {
+        guard !pids.isEmpty else { return }
+        guard QuitConfirmation.ask(
+            title: "Stop idle dev servers?",
+            message: "They will be asked to exit.",
+            confirmTitle: "Stop"
+        ) else { return }
+        _ = QuitService.live().perform(pids: pids, action: .quit, confirmed: true)
+        refreshNow()
+    }
+
+    private func renderDashboard(now: Date, snapshot explicit: SystemSnapshot? = nil) {
+        guard let snapshot = explicit ?? self.snapshot, let dashboard else { return }
+        if hostReadAt == nil || now.timeIntervalSince(hostReadAt!) > 2 {
+            let previousIn = lastBytesIn
+            let previousOut = lastBytesOut
+            let previousAt = hostReadAt
+            cachedBattery = HostExtras.battery()
+            cachedMemory = HostExtras.memory()
+            cachedVolumes = HostExtras.volumes()
+            cachedInterface = HostExtras.primaryInterface()
+            cachedGPU = HostExtras.gpu()
+            if let previousAt, let previousIn, let previousOut, cachedInterface.bytesIn >= previousIn, cachedInterface.bytesOut >= previousOut {
+                let elapsed = now.timeIntervalSince(previousAt)
+                if elapsed > 0 {
+                    downloadPerSecond = Double(cachedInterface.bytesIn - previousIn) / elapsed
+                    uploadPerSecond = Double(cachedInterface.bytesOut - previousOut) / elapsed
+                }
+            }
+            lastBytesIn = cachedInterface.bytesIn
+            lastBytesOut = cachedInterface.bytesOut
+            hostReadAt = now
+        }
+        if dashboard.selectedTab == .projects, lastProjectScan == nil || now.timeIntervalSince(lastProjectScan!) > 15 {
+            let rows = snapshot.apps.flatMap { app in
+                app.members.map { member in
+                    (pid: member.pid, name: member.name, memoryBytes: member.memoryBytes, cpuPercent: member.cpuPercent, startedAt: nil as Date?)
+                }
+            }
+            liveProjects = DevProjects.scan(processes: rows)
+            projectsScanned = true
+            lastProjectScan = now
+        }
+        for project in liveProjects where project.cpuPercent >= 2 {
+            projectBusy[project.directory] = now
+        }
+        dashboard.render(makeDashState(snapshot, now: now))
+    }
+
+    private func recordSeries(_ snapshot: SystemSnapshot, now: Date) {
+        if let lastSeriesAt {
+            let elapsed = now.timeIntervalSince(lastSeriesAt)
+            if elapsed > 0, elapsed < 30 {
+                sessionNetBytes += snapshot.systemNetworkBytesPerSecond * elapsed
+                sessionDiskWrite += sampler.diskWriteBytesPerSecond * elapsed
+            }
+        }
+        lastSeriesAt = now
+        append(snapshot.systemCPUPercent, to: &cpuSeries)
+        let memoryFraction = snapshot.systemMemoryTotalBytes > 0 ? Double(snapshot.systemMemoryUsedBytes) / Double(snapshot.systemMemoryTotalBytes) : 0
+        append(memoryFraction, to: &memorySeries)
+        append(snapshot.systemDiskBytesPerSecond, to: &diskSeries)
+        append(snapshot.systemNetworkBytesPerSecond, to: &netSeries)
+        cpuSum += snapshot.systemCPUPercent
+        cpuCount += 1
+        if let utilization = cachedGPU.utilizationPercent {
+            append(utilization, to: &gpuSeries)
+            gpuSum += utilization
+            gpuCount += 1
+            gpuPeak = max(gpuPeak ?? utilization, utilization)
+        }
+        if let percent = cachedBattery.percent {
+            append(percent, to: &batterySeries)
+        }
+    }
+
+    private func padded(_ series: [Double]) -> [Double] {
+        guard series.count < 24 else { return series }
+        guard let fill = series.last else { return [] }
+        return Array(repeating: fill, count: 24 - series.count) + series
+    }
+
+    private func append(_ value: Double, to series: inout [Double]) {
+        series.append(value)
+        if series.count > 48 {
+            series.removeFirst(series.count - 48)
+        }
+    }
+
+    private func makeDashState(_ snapshot: SystemSnapshot, now: Date) -> DashState {
+        var state = DashState()
+        state.cpuNow = snapshot.systemCPUPercent
+        state.cpuUserShare = sampler.userCPUPercent
+        state.cpuSystemShare = sampler.systemCPUShare
+        state.cpuAverage = cpuCount > 0 ? cpuSum / Double(cpuCount) : snapshot.systemCPUPercent
+        var load = [Double](repeating: 0, count: 1)
+        if getloadavg(&load, 1) == 1 { state.cpuLoad = load[0] }
+        state.cpuCores = sysctlInt("hw.ncpu")
+        state.performanceCores = sysctlInt("hw.perflevel0.physicalcpu")
+        state.efficiencyCores = sysctlInt("hw.perflevel1.physicalcpu")
+        if state.performanceCores == 0 { state.performanceCores = state.cpuCores }
+        state.cpuSeries = padded(cpuSeries)
+
+        state.memoryUsed = snapshot.systemMemoryUsedBytes
+        state.memoryTotal = snapshot.systemMemoryTotalBytes
+        state.memoryApp = snapshot.apps.reduce(0) { $0 + $1.memoryBytes }
+        state.memoryWired = cachedMemory.wiredBytes
+        state.memoryCompressed = cachedMemory.compressedBytes
+        state.memoryCached = cachedMemory.cachedBytes
+        state.memoryFree = cachedMemory.freeBytes
+        state.memorySwap = cachedMemory.swapBytes
+        state.memorySeries = padded(memorySeries)
+
+        if let volume = cachedVolumes.max(by: { $0.totalBytes < $1.totalBytes }) {
+            state.diskFree = volume.freeBytes
+            state.diskUsed = volume.totalBytes > volume.freeBytes ? volume.totalBytes - volume.freeBytes : 0
+        }
+        state.diskReadPerSecond = sampler.diskReadBytesPerSecond
+        state.diskWritePerSecond = sampler.diskWriteBytesPerSecond
+        state.diskWrittenToday = UInt64(sessionDiskWrite)
+        state.diskSeries = padded(diskSeries)
+        state.volumeNames = cachedVolumes.map(\.name)
+
+        state.netDownPerSecond = downloadPerSecond > 0 ? downloadPerSecond : snapshot.systemNetworkBytesPerSecond
+        state.netUpPerSecond = uploadPerSecond
+        state.netToday = UInt64(sessionNetBytes)
+        state.netLast7Days = state.netToday
+        state.netLast30Days = state.netToday
+        state.netInterfaceName = cachedInterface.bsdName
+        state.netInterfaceKind = cachedInterface.kind
+        state.netSeries = padded(netSeries)
+
+        state.gpuName = cachedGPU.name
+        state.gpuPercent = cachedGPU.utilizationPercent
+        state.gpuMemoryBytes = cachedGPU.memoryBytes
+        state.gpuAverage = gpuCount > 0 ? gpuSum / Double(gpuCount) : nil
+        state.gpuPeak = gpuPeak
+        state.gpuSeries = padded(gpuSeries)
+
+        state.hasBattery = cachedBattery.hasBattery
+        state.onBattery = cachedBattery.hasBattery && !cachedBattery.onACPower
+        state.batteryPercent = cachedBattery.percent
+        state.batteryMinutesRemaining = cachedBattery.minutesRemaining
+        state.batteryCycles = cachedBattery.cycleCount
+        state.batteryWatts = cachedBattery.watts
+        state.batteryHealthPercent = cachedBattery.healthPercent
+        state.batteryTemperatureC = cachedBattery.temperatureC
+        state.batterySeries = padded(batterySeries)
+
+        let byCPU = snapshot.apps.sorted { $0.cpuPercent > $1.cpuPercent }.prefix(24)
+        let byMemory = snapshot.apps.sorted { $0.memoryBytes > $1.memoryBytes }.prefix(24)
+        var seen = Set<String>()
+        var apps: [DashApp] = []
+        for app in byCPU + byMemory where seen.insert(app.id).inserted {
+            apps.append(DashApp(
+                id: app.id,
+                name: app.name,
+                processCount: app.members.count,
+                bundlePath: app.bundlePath,
+                cpuPercent: app.cpuPercent,
+                memoryBytes: app.memoryBytes,
+                diskBytesPerSecond: sampler.lastElapsed > 0 ? Double(app.diskBytes) / sampler.lastElapsed : 0,
+                networkBytesPerSecond: 0,
+                energy: app.energy,
+                powerWatts: nil,
+                gpuPercent: nil,
+                icon: icon(forBundle: app.bundlePath)
+            ))
+        }
+        state.apps = apps
+        state.selectedAppID = selectedAppID
+        if let selected = snapshot.apps.first(where: { $0.id == selectedAppID }) {
+            state.members = selected.members.map {
+                DashMember(pid: $0.pid, name: $0.name, cpuPercent: $0.cpuPercent, memoryBytes: $0.memoryBytes)
+            }
+        }
+        state.projects = liveProjects.map { project in
+            let idle: Int?
+            if project.cpuPercent < 2, let busy = projectBusy[project.directory] {
+                let minutes = Int(now.timeIntervalSince(busy) / 60)
+                idle = minutes > 0 ? minutes : nil
+            } else {
+                idle = nil
+            }
+            let uptime = project.oldestStart.map { now.timeIntervalSince($0) }
+            return DashProject(
+                name: project.name,
+                runtime: project.runtime,
+                directory: project.directory,
+                processCount: project.pids.count,
+                ports: project.ports,
+                memoryBytes: project.memoryBytes,
+                cpuPercent: project.cpuPercent,
+                pids: project.pids,
+                uptime: uptime,
+                idleMinutes: idle
+            )
+        }
+        state.projectsScanned = projectsScanned
+        state.alerts = alerts.map(\.message)
+        return state
+    }
+
+    private func icon(forBundle path: String?) -> NSImage? {
+        guard let path else { return nil }
+        if let cached = iconCache[path] { return cached }
+        guard iconCache.count < 64 else { return nil }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        image.size = NSSize(width: 32, height: 32)
+        iconCache[path] = image
+        return image
+    }
+
+    private func sysctlInt(_ name: String) -> Int {
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        if sysctlbyname(name, &value, &size, nil, 0) != 0 { return 0 }
+        return Int(value)
     }
 
     private func makePanel(kind: PanelKind) -> PanelUI {

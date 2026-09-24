@@ -1,5 +1,9 @@
 module CLibProc {
     header "appfold_proc.h"
+    header "appfold_extra.h"
     link "proc"
+    link framework "IOKit"
+    link framework "CoreFoundation"
+    link framework "SystemConfiguration"
     export *
 }

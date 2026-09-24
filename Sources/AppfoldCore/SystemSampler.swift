@@ -4,6 +4,13 @@ import Foundation
 public final class SystemSampler {
     private var previousCPU: [Int32: UInt64] = [:]
     private var previousDisk: [Int32: UInt64] = [:]
+    private var previousDiskRead: UInt64?
+    private var previousDiskWrite: UInt64?
+    public private(set) var userCPUPercent: Double = 0
+    public private(set) var systemCPUShare: Double = 0
+    public private(set) var diskReadBytesPerSecond: Double = 0
+    public private(set) var diskWriteBytesPerSecond: Double = 0
+    public private(set) var lastElapsed: TimeInterval = 0
     private var previousHost: HostCPUTicks?
     private var previousNetwork: UInt64?
     private var previousAt: Date?
@@ -16,6 +23,18 @@ public final class SystemSampler {
         let elapsed = previousAt.map { now.timeIntervalSince($0) } ?? 0
         let usable = elapsed > 0 ? elapsed : 0
         let systemCPU = HostCPU.percent(previous: previousHost, current: host.ticks)
+        if let previous = previousHost {
+            let total = HostCPU.wrappedDelta(host.ticks.total, previous.total)
+            if total > 0 {
+                let user = HostCPU.wrappedDelta(host.ticks.user, previous.user) + HostCPU.wrappedDelta(host.ticks.nice, previous.nice)
+                let system = HostCPU.wrappedDelta(host.ticks.system, previous.system)
+                userCPUPercent = Double(user) / Double(total) * 100
+                systemCPUShare = Double(system) / Double(total) * 100
+            }
+        } else {
+            userCPUPercent = 0
+            systemCPUShare = 0
+        }
         let networkBytes = CounterDelta.bytes(previous: previousNetwork, current: host.networkBytes)
         let networkRate = CounterDelta.perSecond(bytes: networkBytes, elapsed: usable)
 
@@ -23,10 +42,14 @@ public final class SystemSampler {
         var facts: [ProcessFact] = []
         facts.reserveCapacity(listed.count)
         var seen = Set<Int32>()
+        var readTotal: UInt64 = 0
+        var writeTotal: UInt64 = 0
         for proc in listed {
             if proc.pid <= 0 || !seen.insert(proc.pid).inserted { continue }
             let cpu = CPUDelta.percent(previousNS: previousCPU[proc.pid], currentNS: proc.cpuTimeNS, elapsed: usable)
             let disk = CounterDelta.bytes(previous: previousDisk[proc.pid], current: proc.diskBytes)
+            readTotal += proc.diskReadBytes
+            writeTotal += proc.diskWriteBytes
             previousCPU[proc.pid] = proc.cpuTimeNS
             previousDisk[proc.pid] = proc.diskBytes
             let name = proc.name.isEmpty ? "Process \(proc.pid)" : proc.name
@@ -47,6 +70,13 @@ public final class SystemSampler {
         previousDisk = previousDisk.filter { seen.contains($0.key) }
 
         let diskSum = facts.reduce(UInt64(0)) { $0 + $1.diskBytes }
+        let readDelta = CounterDelta.bytes(previous: previousDiskRead, current: readTotal)
+        let writeDelta = CounterDelta.bytes(previous: previousDiskWrite, current: writeTotal)
+        lastElapsed = usable
+        diskReadBytesPerSecond = CounterDelta.perSecond(bytes: readDelta, elapsed: usable)
+        diskWriteBytesPerSecond = CounterDelta.perSecond(bytes: writeDelta, elapsed: usable)
+        previousDiskRead = readTotal
+        previousDiskWrite = writeTotal
         let apps = AppGrouper.group(facts)
         previousHost = host.ticks
         previousNetwork = host.networkBytes
@@ -72,6 +102,8 @@ public final class SystemSampler {
         var memoryBytes: UInt64
         var cpuTimeNS: UInt64
         var diskBytes: UInt64
+        var diskReadBytes: UInt64
+        var diskWriteBytes: UInt64
         var energy: UInt64
     }
 
@@ -102,6 +134,8 @@ public final class SystemSampler {
                 memoryBytes: item.memory_bytes,
                 cpuTimeNS: item.cpu_time_ns,
                 diskBytes: item.disk_bytes,
+                diskReadBytes: item.disk_read_bytes,
+                diskWriteBytes: item.disk_write_bytes,
                 energy: item.energy
             ))
         }

@@ -9,6 +9,8 @@ typedef struct appfold_proc {
     uint64_t memory_bytes;
     uint64_t cpu_time_ns;
     uint64_t disk_bytes;
+    uint64_t disk_read_bytes;
+    uint64_t disk_write_bytes;
     uint64_t energy;
     char name[128];
     char path[1024];

@@ -91,6 +91,8 @@ int appfold_list_processes(appfold_proc *out, int capacity) {
         uint64_t cpuTicks = 0;
         if (usageOK) {
             cpuTicks = usage.ri_user_time + usage.ri_system_time;
+            row->disk_read_bytes = usage.ri_diskio_bytesread;
+            row->disk_write_bytes = usage.ri_diskio_byteswritten;
             row->disk_bytes = usage.ri_diskio_bytesread + usage.ri_diskio_byteswritten;
             row->energy = usage.ri_billed_energy;
         } else {
