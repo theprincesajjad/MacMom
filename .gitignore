@@ -1,5 +1,6 @@
 .build/
 Appfold.app/
+.grove/
 .DS_Store
 *.xcuserstate
 xcuserdata/
